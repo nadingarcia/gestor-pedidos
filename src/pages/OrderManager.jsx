@@ -62,7 +62,7 @@ const renderPedidoToHTML = (pedido) => {
           .complementos { margin-left: 25px; font-size: 11px; color: #333; }
           .obs { margin-left: 25px; margin-top: 2px; font-weight: bold; background: #eee; padding: 2px; display: inline-block; }
           .item-price { text-align: right; font-weight: bold; }
-          .totals-row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+          .totals-row { display: flex; justify-between: space-between; margin-bottom: 2px; }
           .total-big { font-size: 18px; font-weight: 900; margin-top: 5px; }
           .payment-box { border: 2px solid #000; padding: 5px; margin-top: 10px; text-align: center; font-weight: bold; font-size: 14px; }
           .footer { margin-top: 15px; text-align: center; font-size: 10px; }
@@ -79,7 +79,9 @@ const renderPedidoToHTML = (pedido) => {
 
         <div class="info-group">
           <div class="info-label">Cliente</div>
-          <div>${pedido.cliente?.nome || 'Consumidor'}</div> 
+          <div style="font-weight:bold; font-size: 13px;">${pedido.cliente?.nome || 'Consumidor'}</div> 
+          ${pedido.cliente?.telefone ? `<div>Tel: ${pedido.cliente.telefone}</div>` : ''}
+          ${pedido.cliente?.totalPedidos > 0 ? `<div style="font-size:10px; margin-top:2px;">★ Cliente fiel (${pedido.cliente.totalPedidos}º pedido)</div>` : ''}
         </div>
 
         ${pedido.tipo === 'Delivery' && pedido.enderecoEntrega ? `
@@ -113,11 +115,16 @@ const renderPedidoToHTML = (pedido) => {
 }
 
 export default function OrderManager() {
+
+  const [pedidosPendentes, setPedidosPendentes] = useState([]) // PIX Pendente
+  const [pedidosRecusados, setPedidosRecusados] = useState([]) // PIX Recusado (NOVO)
   const [pedidos, setPedidos] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const [printers, setPrinters] = useState([])
+  const [loadingOrderId, setLoadingOrderId] = useState(null) // Estado de loading por pedido
+  const [isFullScreen, setIsFullScreen] = useState(false) // Estado de tela cheia
   
   const processedOrderIds = useRef(new Set())
   const navigate = useNavigate()
@@ -129,6 +136,16 @@ export default function OrderManager() {
     somNotificacao: localStorage.getItem('somNotificacao') !== 'false',
     tempoRefresh: Math.max(10, Math.min(30, parseInt(localStorage.getItem('tempoRefresh')) || 10))
   })
+
+  // --- Monitorar estado de tela cheia ---
+  useEffect(() => {
+    const handleFullScreenChange = () => {
+      setIsFullScreen(!!document.fullscreenElement)
+    }
+    
+    document.addEventListener('fullscreenchange', handleFullScreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullScreenChange)
+  }, [])
 
   // --- Carregar Impressoras ---
   useEffect(() => {
@@ -201,16 +218,36 @@ export default function OrderManager() {
       
       const sorted = Array.isArray(data) ? data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : []
       
+      // --- LÓGICA DE FILTRO DE PAGAMENTO (MELHORADA) ---
+      const pedidosConfirmados = []
+      const aguardandoPagamento = []
+      const pagamentosRecusados = [] // NOVO
+
+      sorted.forEach(p => {
+        const isPixOnline = p.formaPagamento?.includes('pix') || p.formaPagamento === 'online_pix'
+        const isPendente = p.statusPagamento === 'pendente'
+        const isRecusado = p.statusPagamento === 'recusado' // NOVO
+
+        if (isPixOnline && isPendente) {
+          aguardandoPagamento.push(p)
+        } else if (isPixOnline && isRecusado) {
+          pagamentosRecusados.push(p) // NOVO - Separa recusados
+        } else {
+          pedidosConfirmados.push(p)
+        }
+      })
+      
+      setPedidosPendentes(aguardandoPagamento)
+      setPedidosRecusados(pagamentosRecusados) // NOVO
+      
+      // --- FIM LÓGICA FILTRO ---
+
+      // Aceite automático apenas para confirmados
       if (settings.aceitarAutomatico) {
-        const novos = sorted.filter(p => p.status === 'Recebido')
+        const novos = pedidosConfirmados.filter(p => p.status === 'Recebido')
         
         for (const pedido of novos) {
           if (processedOrderIds.current.has(pedido._id)) continue
-
-          if (pedido.formaPagamento === 'pix' && pedido.statusPagamento === 'pendente') {
-            console.warn(`Pedido ${pedido._id} aguardando PIX.`)
-            continue 
-          }
 
           console.log('Aceitando automático:', pedido._id)
           processedOrderIds.current.add(pedido._id)
@@ -224,15 +261,15 @@ export default function OrderManager() {
           pedido.status = 'Em preparação' 
         }
       } else {
-        const novosPendentes = sorted.filter(p => p.status === 'Recebido' && !processedOrderIds.current.has(p._id))
+        const novosPendentes = pedidosConfirmados.filter(p => p.status === 'Recebido' && !processedOrderIds.current.has(p._id))
         if (novosPendentes.length > 0) {
           novosPendentes.forEach(p => processedOrderIds.current.add(p._id))
           playNotificationSound()
-          sendPushNotification('Novo Pedido!', 'Você tem novos pedidos aguardando aprovação.')
+          sendPushNotification('Novo Pedido!', 'Você tem novos pedidos aprovados.')
         }
       }
 
-      setPedidos(sorted)
+      setPedidos(pedidosConfirmados)
     } catch (error) {
       console.error('Erro fetch:', error)
     } finally {
@@ -254,10 +291,8 @@ export default function OrderManager() {
 
     if (!nextStatus) return
 
-    if (pedido.formaPagamento === 'pix' && pedido.statusPagamento === 'pendente') {
-      alert('Aguarde o pagamento do PIX para avançar.')
-      return
-    }
+    // Validação PIX removida - já foi filtrado antes
+    setLoadingOrderId(pedido._id) // Inicia loading
 
     try {
       await apiUpdateStatus(pedido._id, nextStatus)
@@ -267,6 +302,8 @@ export default function OrderManager() {
       await fetchPedidos()
     } catch (err) {
       console.error('Erro ao avançar status', err)
+    } finally {
+      setLoadingOrderId(null) // Remove loading
     }
   }
 
@@ -292,46 +329,83 @@ export default function OrderManager() {
     concluido: pedidos.filter(p => p.status === 'Entregue'),
   }), [pedidos])
 
-  const totalDia = pedidos.reduce((acc, curr) => acc + (curr.total || 0), 0)
+  const totalDia = columns.concluido.reduce((acc, curr) => acc + (curr.total || 0), 0)
+
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => console.log(err))
+    } else {
+      document.exitFullscreen()
+    }
+  }
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
+    <div className="min-h-screen bg-white text-gray-900 flex flex-col">
       
-      {/* Header Minimalista */}
-      <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-[1920px] mx-auto px-6 py-4 flex items-center justify-between">
+      {/* Header Melhorado */}
+      <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm shrink-0">
+        <div className="w-full px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-lg bg-[#7f22fe] flex items-center justify-center shadow-sm">
               <i className="fas fa-utensils text-white text-lg"></i>
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">Gestor de Pedidos</h1>
+              <h1 className="text-xl font-bold text-gray-900 leading-tight">Gestor de Pedidos</h1>
               <div className="flex items-center gap-2 text-xs">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
-                <span className="text-gray-500 font-medium">Online</span>
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                <span className="text-gray-500 font-medium">Loja Aberta</span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex flex-col items-end px-6 border-r border-gray-200">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">Faturamento Hoje</span>
-              <span className="text-2xl font-bold text-gray-900">{formatCurrency(totalDia)}</span>
+          <div className="flex items-center gap-3">
+            {/* Alerta PIX Recusado (NOVO) */}
+            {pedidosRecusados.length > 0 && (
+              <button
+                onClick={() => setSelectedOrder(pedidosRecusados[0])}
+                className="hidden md:flex items-center gap-2 px-3 py-2 bg-red-50 border-2 border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors animate-pulse"
+              >
+                <i className="fas fa-exclamation-triangle"></i>
+                <span className="text-xs font-bold">{pedidosRecusados.length} Pix Recusado</span>
+              </button>
+            )}
+
+            {/* Alerta PIX Pendente */}
+            {pedidosPendentes.length > 0 && (
+              <div className="hidden md:flex items-center gap-2 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-700">
+                <i className="fas fa-clock"></i>
+                <span className="text-xs font-bold">{pedidosPendentes.length} Pix Pendente</span>
+              </div>
+            )}
+
+            <div className="hidden lg:flex flex-col items-end px-4 border-r border-gray-200 mr-2">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">Faturamento (Entregues)</span>
+              <span className="text-xl font-bold text-emerald-600">{formatCurrency(totalDia)}</span>
             </div>
             
+            {/* Botão Fullscreen com ícone dinâmico */}
+            <button 
+              onClick={toggleFullScreen}
+              className="w-10 h-10 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 transition-colors"
+              title={isFullScreen ? "Sair da Tela Cheia" : "Tela Cheia"}
+            >
+              <i className={`fas ${isFullScreen ? 'fa-compress' : 'fa-expand'} text-sm`}></i>
+            </button>
+
             <button 
               onClick={fetchPedidos} 
-              className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors active:scale-95"
+              className="w-10 h-10 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 transition-colors active:scale-95"
+              title="Atualizar"
             >
               <i className="fas fa-sync-alt text-sm"></i>
             </button>
 
             <button 
               onClick={() => setShowSettings(!showSettings)} 
-              className={`w-10 h-10 rounded-lg transition-all active:scale-95 ${
+              className={`w-10 h-10 rounded-lg transition-all active:scale-95 border ${
                 showSettings 
-                  ? 'bg-[#7f22fe] text-white shadow-md' 
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  ? 'bg-[#7f22fe] text-white border-[#7f22fe] shadow-md' 
+                  : 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600'
               }`}
             >
               <i className="fas fa-cog text-sm"></i>
@@ -343,22 +417,68 @@ export default function OrderManager() {
       <div className="flex h-[calc(100vh-81px)]">
         {/* Kanban Board */}
         <main className={`flex-1 p-6 overflow-x-auto overflow-y-hidden transition-all duration-300 bg-gray-50 ${showSettings ? 'mr-96' : ''}`}>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 h-full min-w-[1000px] lg:min-w-0">
+          
+          <div className={`grid gap-4 h-full min-w-[1000px] lg:min-w-0 transition-all ${
+            settings.aceitarAutomatico 
+              ? 'grid-cols-1 md:grid-cols-3'
+              : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4'
+          }`}>
             
-            <KanbanColumn title="Novos Pedidos" count={columns.pendente.length} color="purple" icon="bell">
-              {columns.pendente.map(p => <OrderCard key={p._id} pedido={p} onClick={() => setSelectedOrder(p)} onAdvance={() => advanceStatus(p)} color="purple" />)}
-            </KanbanColumn>
+            {!settings.aceitarAutomatico && (
+              <KanbanColumn title="Novos Pedidos" count={columns.pendente.length} color="purple" icon="bell">
+                {columns.pendente.map(p => (
+                  <OrderCard 
+                    key={p._id} 
+                    pedido={p} 
+                    onClick={() => setSelectedOrder(p)} 
+                    onAdvance={() => advanceStatus(p)} 
+                    onPrint={() => handlePrint(p)}
+                    color="purple"
+                    isLoading={loadingOrderId === p._id}
+                  />
+                ))}
+              </KanbanColumn>
+            )}
 
             <KanbanColumn title="Em Preparação" count={columns.preparo.length} color="orange" icon="fire">
-              {columns.preparo.map(p => <OrderCard key={p._id} pedido={p} onClick={() => setSelectedOrder(p)} onAdvance={() => advanceStatus(p)} color="orange" />)}
+              {columns.preparo.map(p => (
+                <OrderCard 
+                  key={p._id} 
+                  pedido={p} 
+                  onClick={() => setSelectedOrder(p)} 
+                  onAdvance={() => advanceStatus(p)} 
+                  onPrint={() => handlePrint(p)}
+                  color="orange"
+                  isLoading={loadingOrderId === p._id}
+                />
+              ))}
             </KanbanColumn>
 
             <KanbanColumn title="Em Entrega" count={columns.entrega.length} color="blue" icon="shipping-fast">
-              {columns.entrega.map(p => <OrderCard key={p._id} pedido={p} onClick={() => setSelectedOrder(p)} onAdvance={() => advanceStatus(p)} color="blue" />)}
+              {columns.entrega.map(p => (
+                <OrderCard 
+                  key={p._id} 
+                  pedido={p} 
+                  onClick={() => setSelectedOrder(p)} 
+                  onAdvance={() => advanceStatus(p)}
+                  onPrint={() => handlePrint(p)}
+                  color="blue"
+                  isLoading={loadingOrderId === p._id}
+                />
+              ))}
             </KanbanColumn>
 
             <KanbanColumn title="Finalizados" count={columns.concluido.length} color="emerald" icon="check-circle">
-              {columns.concluido.map(p => <OrderCard key={p._id} pedido={p} onClick={() => setSelectedOrder(p)} isDone color="emerald" />)}
+              {columns.concluido.map(p => (
+                <OrderCard 
+                  key={p._id} 
+                  pedido={p} 
+                  onClick={() => setSelectedOrder(p)}
+                  onPrint={() => handlePrint(p)}
+                  isDone 
+                  color="emerald"
+                />
+              ))}
             </KanbanColumn>
 
           </div>
@@ -474,10 +594,11 @@ export default function OrderManager() {
           onClose={() => setSelectedOrder(null)} 
           onPrint={() => handlePrint(selectedOrder)}
           onAdvance={() => advanceStatus(selectedOrder)}
+          isLoading={loadingOrderId === selectedOrder._id}
         />
       )}
 
-      <style jsx>{`
+      <style>{`
         .slider-purple::-webkit-slider-thumb {
           appearance: none;
           width: 18px;
@@ -534,21 +655,28 @@ function KanbanColumn({ title, count, children, color, icon }) {
   }
   
   return (
-    <div className="flex flex-col h-full rounded-lg bg-white border-2 border-gray-200 overflow-hidden shadow-sm">
-      <div className={`p-4 border-b-2 ${colorThemes[color]} flex justify-between items-center`}>
+    <div className="flex flex-col h-full rounded-xl bg-gray-100/50 border border-gray-200 overflow-hidden shadow-sm">
+      <div className={`px-4 py-3 border-b-2 bg-white flex justify-between items-center ${colorThemes[color].split(' ')[0]}`}>
         <div className={`font-bold flex items-center gap-2 ${textColors[color]}`}>
-          <i className={`fas fa-${icon}`}></i>
-          <span>{title}</span>
+          <div className={`p-1.5 rounded-md bg-opacity-10 ${colorThemes[color].replace('border-', 'bg-')}`}>
+             <i className={`fas fa-${icon}`}></i>
+          </div>
+          <span className="uppercase tracking-tight text-sm">{title}</span>
         </div>
-        <span className="bg-white px-3 py-1 rounded-full text-xs font-bold text-gray-700 border border-gray-300">
+        <span className="bg-gray-800 px-2.5 py-0.5 rounded-md text-xs font-bold text-white">
           {count}
         </span>
       </div>
-      <div className="flex-1 p-3 overflow-y-auto space-y-3">
-        {children.length > 0 ? children : (
-          <div className="text-center py-16">
-            <i className={`fas fa-inbox text-4xl text-gray-200 mb-3 block`}></i>
-            <p className="text-gray-400 text-sm">Nenhum pedido</p>
+      
+      <div className="flex-1 p-2 overflow-y-auto custom-scrollbar">
+        {children.length > 0 ? (
+          <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-2">
+            {children}
+          </div>
+        ) : (
+          <div className="h-full flex flex-col items-center justify-center opacity-40">
+            <i className={`fas fa-${icon} text-3xl mb-2`}></i>
+            <span className="text-sm font-medium">Vazio</span>
           </div>
         )}
       </div>
@@ -556,78 +684,135 @@ function KanbanColumn({ title, count, children, color, icon }) {
   )
 }
 
-function OrderCard({ pedido, onClick, onAdvance, isDone, color }) {
+function OrderCard({ pedido, onClick, onAdvance, onPrint, isDone, color, isLoading }) {
   const colorThemes = {
-    purple: 'border-[#7f22fe] hover:shadow-purple-100',
-    orange: 'border-orange-500 hover:shadow-orange-100',
-    blue: 'border-blue-500 hover:shadow-blue-100',
-    emerald: 'border-emerald-500 hover:shadow-emerald-100',
+    purple: 'border-l-4 border-l-[#7f22fe]',
+    orange: 'border-l-4 border-l-orange-500',
+    blue: 'border-l-4 border-l-blue-500',
+    emerald: 'border-l-4 border-l-emerald-500 opacity-60 grayscale-[0.5]',
   }
-
-  const buttonColors = {
-    purple: 'bg-[#7f22fe] hover:bg-[#6b1de0]',
-    orange: 'bg-orange-500 hover:bg-orange-600',
-    blue: 'bg-blue-500 hover:bg-blue-600',
-    emerald: 'bg-emerald-500 hover:bg-emerald-600',
-  }
-  
-  const isPixPending = pedido.formaPagamento === 'pix' && pedido.statusPagamento === 'pendente'
 
   return (
     <div 
       onClick={onClick} 
-      className={`bg-white p-4 rounded-lg border-2 shadow-sm transition-all cursor-pointer hover:shadow-md ${colorThemes[color]} ${isDone ? 'opacity-50' : ''}`}
+      className={`relative bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer border border-gray-200 group ${colorThemes[color]}`}
     >
-      {isPixPending && (
-        <div className="mb-2">
-          <div className="bg-yellow-400 text-black text-[10px] font-bold px-2 py-1 rounded inline-block">
-            <i className="fas fa-exclamation-triangle mr-1"></i>PIX PENDENTE
+      {/* Cabeçalho do Card - FONTE MAIOR */}
+      <div className="flex justify-between items-start mb-3 border-b border-gray-100 pb-3">
+        <div>
+          <span className="text-sm font-black text-gray-900 block">
+             #{pedido._id.slice(-4).toUpperCase()}
+          </span>
+          <span className="text-xs text-gray-600 font-semibold">
+            {formatTime(pedido.createdAt)}
+          </span>
+        </div>
+        <div className="text-right">
+           <span className="text-base font-black text-gray-900 block">{formatCurrency(pedido.total)}</span>
+           <span className="text-xs uppercase font-bold text-gray-600">{pedido.tipo}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 mb-3 bg-gray-50 p-2 rounded border border-gray-100">
+        <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">
+          <i className="fas fa-user text-xs"></i>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-gray-900 truncate">
+            {pedido.cliente?.nome || 'Consumidor'}
+          </p>
+          {pedido.cliente?.totalPedidos > 1 && (
+            <p className="text-[10px] text-emerald-600 font-bold leading-none">
+              ★ {pedido.cliente.totalPedidos}º Pedido
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Lista de Itens - FONTE MAIOR E LEGÍVEL */}
+      <div className="space-y-2 mb-4 min-h-[80px]">
+        {pedido.itens.map((item, idx) => (
+          <div key={idx} className="text-sm leading-relaxed">
+            <div className="flex items-start gap-1">
+              <span className="font-black text-gray-900 min-w-[24px]">{item.quantidade}x</span>
+              <span className="text-gray-800 font-semibold flex-1">{item.nome}</span>
+            </div>
+            
+            {/* Complementos com melhor contraste */}
+            {item.complementos?.length > 0 && (
+              <p className="text-xs text-gray-600 ml-6 mt-1 leading-snug font-medium">
+                + {item.complementos.join(', ')}
+              </p>
+            )}
+            
+            {/* OBS destacada */}
+            {item.obs && (
+              <div className="text-xs bg-yellow-100 text-yellow-900 px-2 py-1 rounded mt-1 ml-6 font-bold border border-yellow-300 inline-block">
+                ⚠️ {item.obs}
+              </div>
+            )}
           </div>
-        </div>
-      )}
-
-      <div className="flex justify-between items-start mb-3">
-        <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-1 rounded">
-          #{pedido._id.slice(-4).toUpperCase()}
-        </span>
-        <span className="text-[10px] text-gray-400 font-medium">{formatTime(pedido.createdAt)}</span>
+        ))}
       </div>
 
-      <div className="mb-4">
-        <div className="font-bold text-gray-900 text-sm line-clamp-2 leading-tight mb-1">
-          {pedido.itens[0].quantidade}x {pedido.itens[0].nome}
-        </div>
-        {pedido.itens.length > 1 && (
-          <div className="text-xs text-gray-500">+{pedido.itens.length - 1} outros itens</div>
-        )}
-      </div>
-
-      <div className="flex items-center justify-between pt-3 border-t border-gray-200">
-        <div className="text-base font-bold text-gray-900">
-          {formatCurrency(pedido.total)}
-        </div>
-        
-        {!isDone && (
+      {/* Rodapé com Ação Rápida */}
+      {!isDone && (
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+          <button 
+            onClick={(e) => { e.stopPropagation(); onPrint(pedido); }}
+            className="p-2 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+            title="Imprimir Rápido"
+          >
+             <i className="fas fa-print text-sm"></i>
+          </button>
+          
           <button 
             onClick={(e) => { e.stopPropagation(); onAdvance() }}
-            disabled={isPixPending}
-            className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all text-white shadow-sm ${
-              isPixPending 
-                ? 'bg-gray-300 cursor-not-allowed' 
-                : `${buttonColors[color]} active:scale-95`
+            disabled={isLoading}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-black text-white shadow-sm flex items-center justify-center gap-2 transition-all ${
+              isLoading 
+                ? 'bg-gray-400 cursor-wait' 
+                : 'bg-gray-900 hover:bg-black active:scale-95'
             }`}
-            title="Avançar Etapa"
           >
-            <i className="fas fa-arrow-right text-sm"></i>
+            {isLoading ? (
+              <>
+                <i className="fas fa-spinner fa-spin"></i>
+                <span>PROCESSANDO...</span>
+              </>
+            ) : (
+              <>
+                <span>AVANÇAR</span>
+                <i className="fas fa-chevron-right text-xs"></i>
+              </>
+            )}
           </button>
-        )}
+        </div>
+      )}
+      
+      {/* Ícone de expandir FORA do card para não cobrir texto */}
+      <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full w-6 h-6 flex items-center justify-center shadow-md border border-gray-200">
+         <i className="fas fa-expand-alt text-gray-500 text-xs"></i>
       </div>
     </div>
   )
 }
 
-function OrderModal({ pedido, onClose, onPrint, onAdvance }) {
-  const isPixPending = pedido.formaPagamento === 'pix' && pedido.statusPagamento === 'pendente'
+function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading }) {
+   const handleWhatsApp = () => {
+    if (!pedido.cliente?.telefone) return
+    // Remove caracteres não numéricos
+    const phone = pedido.cliente.telefone.replace(/\D/g, '')
+    // Adiciona 55 se não tiver
+    const fullPhone = phone.length <= 11 ? `55${phone}` : phone
+    
+    const msg = `Olá ${pedido.cliente.nome}, tudo bem? Aqui é do NexFood. Estamos entrando em contato sobre seu pedido #${pedido._id.slice(-4).toUpperCase()}.`
+    
+    window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, '_blank')
+  }
+  
+  const isPixRecusado = (pedido.formaPagamento === 'pix' || pedido.formaPagamento === 'online_pix') 
+                         && pedido.statusPagamento === 'recusado'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -660,19 +845,40 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance }) {
 
         {/* Content */}
         <div className="overflow-y-auto p-6 space-y-6 flex-1">
-            
-            {isPixPending && (
-              <div className="rounded-xl bg-yellow-50 border-2 border-yellow-400 p-5">
-                <div className="flex items-center gap-4 text-yellow-800">
-                  <div className="w-12 h-12 rounded-lg bg-yellow-400 flex items-center justify-center">
-                    <i className="fas fa-exclamation-triangle text-xl text-yellow-900"></i>
+
+            {/* Alerta PIX Recusado */}
+            {isPixRecusado && (
+              <div className="rounded-xl bg-red-50 border-2 border-red-400 p-6">
+                <div className="flex items-start gap-4 text-red-900">
+                  <div className="w-14 h-14 rounded-lg bg-red-500 flex items-center justify-center shrink-0">
+                    <i className="fas fa-ban text-2xl text-white"></i>
                   </div>
-                  <div>
-                    <p className="font-bold text-base">Pagamento Pendente</p>
-                    <p className="text-sm">Aguarde confirmação do PIX antes de preparar.</p>
+                  <div className="flex-1">
+                    <p className="font-black text-lg mb-2">⚠️ Pagamento Recusado</p>
+                    <p className="text-sm leading-relaxed mb-3">
+                      O pagamento PIX foi recusado. Este pedido <strong>não deve ser preparado</strong>.
+                    </p>
+                    <div className="bg-white rounded-lg p-3 border border-red-200">
+                      <p className="text-xs font-bold mb-1">AÇÕES SUGERIDAS:</p>
+                      <ul className="text-xs space-y-1 ml-4 list-disc">
+                        <li>Entre em contato com o cliente pelo telefone</li>
+                        <li>Ofereça nova tentativa de pagamento</li>
+                        <li>Considere converter para dinheiro/cartão na entrega</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
               </div>
+            )}
+
+            {pedido.cliente?.telefone && (
+              <button 
+                onClick={handleWhatsApp}
+                className="w-full mb-2 flex items-center justify-center gap-2 py-3 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg transition-colors font-bold"
+              >
+                <i className="fab fa-whatsapp text-xl"></i>
+                <span>Conversar com {pedido.cliente.nome.split(' ')[0]} ({pedido.cliente.telefone})</span>
+              </button>
             )}
 
             {/* Itens */}
@@ -754,8 +960,12 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance }) {
                     <span className="text-xs uppercase font-bold text-gray-900 bg-gray-100 px-3 py-1 rounded border border-gray-300">
                       {pedido.formaPagamento?.replace(/_/g, ' ')}
                     </span>
-                    <span className={`text-xs font-bold ${
-                      pedido.statusPagamento === 'aprovado' ? 'text-emerald-700' : 'text-yellow-700'
+                    <span className={`text-xs font-bold px-2 py-1 rounded ${
+                      pedido.statusPagamento === 'aprovado' 
+                        ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' 
+                        : pedido.statusPagamento === 'recusado'
+                        ? 'bg-red-100 text-red-700 border border-red-300'
+                        : 'bg-yellow-100 text-yellow-700 border border-yellow-300'
                     }`}>
                       {pedido.statusPagamento?.replace(/_/g, ' ').toUpperCase()}
                     </span>
@@ -775,18 +985,27 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance }) {
             <span>Imprimir</span>
           </button>
           
-          {pedido.status !== 'Entregue' && pedido.status !== 'Cancelado' && (
+          {pedido.status !== 'Entregue' && pedido.status !== 'Cancelado' && !isPixRecusado && (
             <button 
               onClick={() => { onAdvance(); onClose(); }} 
-              disabled={isPixPending}
+              disabled={isLoading}
               className={`flex-[2] py-4 rounded-lg font-bold transition-all text-white shadow-md ${
-                isPixPending 
-                  ? 'bg-gray-300 cursor-not-allowed' 
+                isLoading 
+                  ? 'bg-gray-400 cursor-wait' 
                   : 'bg-[#7f22fe] hover:bg-[#6b1de0]'
               }`}
             >
-              <i className="fas fa-arrow-right mr-2"></i>
-              <span>Avançar Etapa</span>
+              {isLoading ? (
+                <>
+                  <i className="fas fa-spinner fa-spin mr-2"></i>
+                  <span>Processando...</span>
+                </>
+              ) : (
+                <>
+                  <i className="fas fa-arrow-right mr-2"></i>
+                  <span>Avançar Etapa</span>
+                </>
+              )}
             </button>
           )}
         </div>
