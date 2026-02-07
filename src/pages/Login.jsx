@@ -1,4 +1,4 @@
-import { useState, useCallback, useId } from 'react'
+import { useState, useCallback, useId, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const API_URL = 'https://nexfood.vercel.app/api/login'
@@ -39,6 +39,16 @@ export default function Login() {
   const [state, setState] = useState({ loading: false, success: false, error: '' })
   
   const navigate = useNavigate()
+
+  useEffect(() => {
+    // Verifica se já existe um token salvo (Seja fixo ou temporário)
+    const token = localStorage.getItem('nexfood_token') || sessionStorage.getItem('nexfood_token')
+    
+    // Se tiver token, manda para pedidos e não renderiza o form
+    if (token) {
+      navigate('/pedidos', { replace: true })
+    }
+  }, [navigate])
   
   const phoneId = useId()
   const passwordId = useId()
@@ -376,12 +386,16 @@ export default function Login() {
               {/* Footer */}
               <div className="pt-6 mt-6 text-center border-t border-gray-200">
                 <p className="text-gray-500 text-sm mb-2">Ainda não tem uma conta?</p>
+                
+                {/* Link modificado para WhatsApp */}
                 <a 
-                  href="#solicitar" 
+                  href="https://wa.me/5511968337522?text=Ol%C3%A1%2C%20gostaria%20de%20saber%20mais%20sobre%20o%20sistema%20NexFood%20e%20solicitar%20acesso%21" 
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-[#7f22fe] hover:text-[#6b1de0] font-semibold text-sm transition hover:underline"
                 >
-                  <span>Solicitar acesso</span>
-                  <i className="fas fa-external-link-alt text-xs"></i>
+                  <span>Solicitar acesso via WhatsApp</span>
+                  <i className="fab fa-whatsapp text-sm ml-1"></i>
                 </a>
               </div>
 

@@ -206,7 +206,7 @@ export default function OrderManager() {
 
   const fetchPedidos = useCallback(async () => {
     try {
-      const token = localStorage.getItem('nexfood_token')
+      const token = localStorage.getItem('nexfood_token') || sessionStorage.getItem('nexfood_token')
       if (!token) return navigate('/login')
 
       const res = await fetch('https://nexfood.vercel.app/api/pedidos/dia', {
@@ -576,7 +576,12 @@ export default function OrderManager() {
               </div>
               
               <button 
-                onClick={() => { localStorage.removeItem('nexfood_token'); navigate('/login') }} 
+                onClick={() => { 
+                  localStorage.removeItem('nexfood_token')
+                  localStorage.removeItem('nexfood_user')
+                  sessionStorage.removeItem('nexfood_token')
+                  sessionStorage.removeItem('nexfood_user')
+                  navigate('/login') }} 
                 className="mt-6 w-full py-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 font-bold transition-all uppercase tracking-wider text-sm"
               >
                 <i className="fas fa-sign-out-alt mr-2"></i>
@@ -670,7 +675,8 @@ function KanbanColumn({ title, count, children, color, icon }) {
       
       <div className="flex-1 p-2 overflow-y-auto custom-scrollbar">
         {children.length > 0 ? (
-          <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-2">
+          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+
             {children}
           </div>
         ) : (
@@ -695,7 +701,7 @@ function OrderCard({ pedido, onClick, onAdvance, onPrint, isDone, color, isLoadi
   return (
     <div 
       onClick={onClick} 
-      className={`relative bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer border border-gray-200 group ${colorThemes[color]}`}
+      className={`relative bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer border border-gray-200 group ${colorThemes[color]} min-w-[280px] sm:min-w-[300px]`}
     >
       {/* Cabeçalho do Card - FONTE MAIOR */}
       <div className="flex justify-between items-start mb-3 border-b border-gray-100 pb-3">
