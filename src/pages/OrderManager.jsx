@@ -169,7 +169,7 @@ export default function OrderManager() {
 
   const playNotificationSound = () => {
     if (!settings.somNotificacao) return
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3')
+    const audio = new Audio('https://nexfood.vercel.app/sounds/notification.mp3')
     audio.play().catch(e => console.error('Erro áudio:', e))
   }
 
