@@ -146,10 +146,12 @@ export default function Login() {
           {/* Logo */}
           <div className="flex items-center gap-4 mb-12">
             <div className="w-16 h-16 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg">
-              <i className="fas fa-utensils text-white text-2xl"></i>
+              <i className="fas fa-bolt text-white text-2xl"></i>
             </div>
             <div>
-              <h2 className="text-gray-900 text-3xl font-bold tracking-tight">NEXFOOD</h2>
+              <h2 className="text-gray-900 text-3xl font-bold tracking-tight">NEX
+                <i className="fas fa-bolt"></i>
+                FOOD</h2>
               <p className="text-gray-500 text-sm font-medium">Gestão de Pedidos Premium</p>
             </div>
           </div>

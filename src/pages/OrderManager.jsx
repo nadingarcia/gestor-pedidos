@@ -347,7 +347,7 @@ export default function OrderManager() {
         <div className="w-full px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-lg bg-[#7f22fe] flex items-center justify-center shadow-sm">
-              <i className="fas fa-utensils text-white text-lg"></i>
+              <i className="fas fa-bolt text-white text-lg"></i>
             </div>
             <div>
               <h1 className="text-xl font-bold text-gray-900 leading-tight">Gestor de Pedidos</h1>
@@ -553,7 +553,7 @@ export default function OrderManager() {
               <div className="p-6 rounded-xl bg-gray-50 border border-gray-200">
                 <div className="text-center mb-4">
                   <div className="w-16 h-16 mx-auto mb-3 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-md">
-                    <i className="fas fa-utensils text-2xl text-white"></i>
+                    <i className="fas fa-bolt text-2xl text-white"></i>
                   </div>
                   <h4 className="font-bold text-gray-900 text-lg mb-1">NEXFOOD</h4>
                   <p className="text-xs text-gray-500">by Nadin Garcia</p>
