@@ -555,7 +555,9 @@ export default function OrderManager() {
                   <div className="w-16 h-16 mx-auto mb-3 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-md">
                     <i className="fas fa-bolt text-2xl text-white"></i>
                   </div>
-                  <h4 className="font-bold text-gray-900 text-lg mb-1">NEXFOOD</h4>
+                  <h4 className="font-bold text-gray-900 text-lg mb-1">NEX
+                    <i className='fas fa-bolt'></i>
+                    FOOD</h4>
                   <p className="text-xs text-gray-500">by Nadin Garcia</p>
                 </div>
                 
