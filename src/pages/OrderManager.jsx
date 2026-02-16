@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import electronAPI from '@utils/electronBridge'
+import { useOrderClustering } from '@hooks/useOrderClustering' // Ajuste o caminho conforme sua estrutura
 
 // --- Utilitários de Formatação ---
 const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0)
@@ -134,7 +135,9 @@ export default function OrderManager() {
     aceitarAutomatico: localStorage.getItem('aceitarAutomatico') !== 'false',
     notificacoesPush: localStorage.getItem('notificacoesPush') === 'true',
     somNotificacao: localStorage.getItem('somNotificacao') !== 'false',
-    tempoRefresh: Math.max(10, Math.min(30, parseInt(localStorage.getItem('tempoRefresh')) || 10))
+    tempoRefresh: Math.max(10, Math.min(30, parseInt(localStorage.getItem('tempoRefresh')) || 10)),
+    agruparPorDistancia: localStorage.getItem('agruparPorDistancia') === 'true',
+    raioCluster: parseFloat(localStorage.getItem('raioCluster')) || 2 // NOVO - padrão 2km
   })
 
   // --- Monitorar estado de tela cheia ---
@@ -163,7 +166,10 @@ export default function OrderManager() {
   }, [])
 
   const saveSettings = (newSettings) => {
-    Object.keys(newSettings).forEach(key => localStorage.setItem(key, newSettings[key]))
+    Object.keys(newSettings).forEach(key => {
+      const value = newSettings[key]
+      localStorage.setItem(key, value === null || value === undefined ? '' : String(value))
+    })
     setSettings(newSettings)
   }
 
@@ -322,12 +328,14 @@ export default function OrderManager() {
     }
   }
 
+  const pedidosComClusters = useOrderClustering(pedidos, settings.agruparPorDistancia, settings.raioCluster)
+
   const columns = useMemo(() => ({
-    pendente: pedidos.filter(p => !p.status || p.status === 'Recebido'),
-    preparo: pedidos.filter(p => p.status === 'Em preparação'),
-    entrega: pedidos.filter(p => ['Saiu para entrega', 'Saiu para Entrega'].includes(p.status)),
-    concluido: pedidos.filter(p => p.status === 'Entregue'),
-  }), [pedidos])
+    pendente: pedidosComClusters.filter(p => !p.status || p.status === 'Recebido'),
+    preparo: pedidosComClusters.filter(p => p.status === 'Em preparação'),
+    entrega: pedidosComClusters.filter(p => ['Saiu para entrega', 'Saiu para Entrega'].includes(p.status)),
+    concluido: pedidosComClusters.filter(p => p.status === 'Entregue'),
+  }), [pedidosComClusters])
 
   const totalDia = columns.concluido.reduce((acc, curr) => acc + (curr.total || 0), 0)
 
@@ -549,6 +557,84 @@ export default function OrderManager() {
               </div>
             </section>
 
+            <section className="space-y-4">
+              <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <i className="fas fa-route"></i> Otimização de Entregas
+              </h3>
+              
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 hover:border-blue-300 transition-colors">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm text-gray-900 font-bold">Agrupar por Distância</span>
+                      <span className="text-[10px] bg-blue-500 text-white px-2 py-0.5 rounded-full font-bold">BETA</span>
+                    </div>
+                    <p className="text-[10px] text-gray-600 leading-relaxed">
+                      Destaca pedidos próximos para otimizar rotas
+                    </p>
+                  </div>
+                  <Switch 
+                    checked={settings.agruparPorDistancia} 
+                    onChange={() => saveSettings({...settings, agruparPorDistancia: !settings.agruparPorDistancia})} 
+                  />
+                </div>
+
+                {settings.agruparPorDistancia && (
+                  <>
+                    {/* Controle de Raio */}
+                    <div className="p-5 rounded-lg bg-white border-2 border-blue-200">
+                      <div className="flex justify-between items-center mb-3">
+                        <div>
+                          <span className="text-sm font-bold text-gray-900 block">Raio de Proximidade</span>
+                          <span className="text-[10px] text-gray-500">Até quantos km considera próximo?</span>
+                        </div>
+                        <span className="text-lg font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-lg border-2 border-blue-300">
+                          {settings.raioCluster}km
+                        </span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0.5" 
+                        max="10" 
+                        step="0.5" 
+                        value={settings.raioCluster} 
+                        onChange={(e) => saveSettings({...settings, raioCluster: parseFloat(e.target.value)})}
+                        className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
+                      />
+                      <div className="flex justify-between text-[10px] text-gray-500 mt-2 font-medium">
+                        <span>0.5km Restrito</span>
+                        <span>10km Amplo</span>
+                      </div>
+                    </div>
+
+                    {/* Info Box */}
+                    <div className="p-4 rounded-lg bg-blue-50 border border-blue-200">
+                      <div className="flex items-start gap-3">
+                        <i className="fas fa-lightbulb text-blue-500 mt-0.5 text-lg"></i>
+                        <div className="text-xs text-blue-900">
+                          <p className="font-bold mb-2">Como funciona:</p>
+                          <ul className="space-y-1.5 text-[11px] leading-relaxed">
+                            <li className="flex items-start gap-2">
+                              <i className="fas fa-check text-blue-500 mt-0.5 text-[10px]"></i>
+                              <span>Cada grupo recebe uma <strong>cor única</strong></span>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <i className="fas fa-check text-blue-500 mt-0.5 text-[10px]"></i>
+                              <span>Veja a <strong>distância exata</strong> entre pedidos</span>
+                            </li>
+                            <li className="flex items-start gap-2">
+                              <i className="fas fa-check text-blue-500 mt-0.5 text-[10px]"></i>
+                              <span>Otimize entregas agrupando rotas</span>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
+
             <div className="pt-6 border-t border-gray-200">
               <div className="p-6 rounded-xl bg-gray-50 border border-gray-200">
                 <div className="text-center mb-4">
@@ -675,10 +761,9 @@ function KanbanColumn({ title, count, children, color, icon }) {
         </span>
       </div>
       
-      <div className="flex-1 p-2 overflow-y-auto custom-scrollbar">
+      <div className="flex-1 p-3 overflow-y-auto custom-scrollbar">
         {children.length > 0 ? (
-          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
             {children}
           </div>
         ) : (
@@ -720,6 +805,42 @@ function OrderCard({ pedido, onClick, onAdvance, onPrint, isDone, color, isLoadi
            <span className="text-xs uppercase font-bold text-gray-600">{pedido.tipo}</span>
         </div>
       </div>
+
+      {/* Badge de Cluster INTELIGENTE com CORES */}
+      {pedido.clusterId && pedido.clusterSize > 1 && (
+        <div className={`mb-3 border-2 rounded-lg p-2.5 ${pedido.clusterColor.bg} ${pedido.clusterColor.border}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <div className={`w-7 h-7 rounded-full ${pedido.clusterColor.badge} flex items-center justify-center text-white font-bold text-xs shadow-sm`}>
+              {pedido.clusterSize}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-xs font-bold ${pedido.clusterColor.text} leading-tight`}>
+                Rota Compartilhada
+              </p>
+              <p className={`text-[10px] ${pedido.clusterColor.icon} font-medium`}>
+                {pedido.clusterSize} pedidos próximos
+              </p>
+            </div>
+            <i className={`fas fa-route ${pedido.clusterColor.icon} text-sm`}></i>
+          </div>
+          
+          {/* Lista de pedidos próximos */}
+          <div className="space-y-1 pt-2 border-t border-current opacity-30">
+            {pedido.clusterDistances.slice(0, 2).map((nearby, idx) => (
+              <div key={idx} className={`flex items-center gap-2 text-[10px] ${pedido.clusterColor.text}`}>
+                <i className="fas fa-arrow-right text-[8px]"></i>
+                <span className="font-bold">#{nearby.orderNumber}</span>
+                <span className="opacity-75">→ {nearby.distance.toFixed(1)}km</span>
+              </div>
+            ))}
+            {pedido.clusterDistances.length > 2 && (
+              <div className={`text-[9px] ${pedido.clusterColor.text} opacity-60 font-medium pl-4`}>
+                +{pedido.clusterDistances.length - 2} mais...
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 mb-3 bg-gray-50 p-2 rounded border border-gray-100">
         <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">
@@ -927,12 +1048,10 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading }) {
                   {pedido.enderecoEntrega ? (
                     <>
                       <p className="text-gray-900 font-semibold">{pedido.enderecoEntrega.rua}, {pedido.enderecoEntrega.numero}</p>
-                      <p className="text-gray-600 text-xs">{pedido.enderecoEntrega.bairro} - {pedido.enderecoEntrega.cidade}</p>
-                      {pedido.enderecoEntrega.complemento && (
-                        <p className="text-gray-600 text-xs italic mt-2 bg-white p-2 rounded border border-blue-100">
-                          {pedido.enderecoEntrega.complemento}
-                        </p>
-                      )}
+                      <p className="text-gray-600 text-xs">{pedido.enderecoEntrega.bairro} - {pedido.enderecoEntrega.cidade} - 
+                        {pedido.enderecoEntrega.complemento && (
+                          pedido.enderecoEntrega.complemento
+                      )}</p>
                     </>
                   ) : (
                     <div className="flex items-center gap-2 text-gray-700 bg-white p-3 rounded border border-blue-200">
@@ -941,6 +1060,42 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading }) {
                     </div>
                   )}
                 </div>
+                {/* Badge de Cluster DETALHADO na Modal */}
+                  {pedido.clusterId && pedido.clusterSize > 1 && (
+                    <div className={`mt-2 ${pedido.clusterColor.bg} ${pedido.clusterColor.border}`}>
+                      {/* Lista COMPLETA de pedidos próximos */}
+                      <div className={`bg-white rounded-lg p-4 border ${pedido.clusterColor.border}`}>
+                        <p className={`text-xs font-bold ${pedido.clusterColor.text} mb-3 flex items-center gap-2`}>
+                          <i className="fas fa-map-marked-alt"></i>
+                          Pedidos na Mesma Rota:
+                        </p>
+                        <div className="space-y-2">
+                          {pedido.clusterDistances.map((nearby, idx) => (
+                            <div key={idx} className={`flex items-center justify-between p-2 rounded ${pedido.clusterColor.bg} border ${pedido.clusterColor.border}`}>
+                              <div className="flex items-center gap-3">
+                                <div className={`w-6 h-6 rounded-full ${pedido.clusterColor.badge} text-white text-xs font-bold flex items-center justify-center`}>
+                                  {idx + 1}
+                                </div>
+                                <div>
+                                  <p className={`text-xs font-bold ${pedido.clusterColor.text}`}>
+                                    Pedido #{nearby.orderNumber}
+                                  </p>
+                                  <p className={`text-[10px] ${pedido.clusterColor.icon} truncate max-w-[200px]`}>
+                                    {nearby.address}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className={`text-right`}>
+                                <p className={`text-xs font-black ${pedido.clusterColor.badge} text-white px-2 py-1 rounded`}>
+                                  {nearby.distance.toFixed(1)} km
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
               </div>
 
               <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-5">
