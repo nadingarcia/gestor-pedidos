@@ -17,14 +17,13 @@
     "repository": {
     "type": "git",
     "url": "https://github.com/nadingarcia/gestor-pedidos"
-  },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "nadingarcia",
-        "repo": "gestor-pedidos"
-      }
-    ],
+  },  
+  "publish": {
+      "provider": "github",
+      "owner": "nadingarcia",
+      "repo": "gestor-pedidos",
+      "releaseType": "release"
+    },
   "keywords": [
     "restaurante",
     "pedidos",
