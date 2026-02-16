@@ -14,6 +14,17 @@
     "electron:build:mac": "npm run build && electron-builder --mac",
     "electron:build:linux": "npm run build && electron-builder --linux"
   },
+    "repository": {
+    "type": "git",
+    "url": "https://github.com/nadingarcia/gestor-pedidos"
+  },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "nadingarcia",
+        "repo": "gestor-pedidos"
+      }
+    ],
   "keywords": [
     "restaurante",
     "pedidos",
@@ -55,6 +66,7 @@
       "output": "release"
     },
     "win": {
+      "verifyUpdateCodeSignature": false, 
       "target": [
         "nsis"
       ],
