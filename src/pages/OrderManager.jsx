@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import electronAPI from '@utils/electronBridge'
 import { useOrderClustering } from '@hooks/useOrderClustering'
+import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
 
 // --- Utilitários de Formatação ---
 const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0)
@@ -21,7 +22,7 @@ const formatDate = (dateStr) => {
 const getTimeElapsed = (dateStr) => {
   if (!dateStr) return { minutes: 0, isUrgent: false }
   const now = new Date()
-  const created = new Date(dateStr)
+  const created = new Date(dateStr) 
   const minutes = Math.floor((now - created) / 60000)
   return { minutes, isUrgent: minutes > 30 }
 }
@@ -147,17 +148,19 @@ export default function OrderManager() {
   const [printers, setPrinters] = useState([])
   const [loadingOrderId, setLoadingOrderId] = useState(null)
   const [isFullScreen, setIsFullScreen] = useState(false)
-  
-  // --- NOVOS ESTADOS PARA BUSCA E FILTROS ---
+  const [finishedColumnCollapsed, setFinishedColumnCollapsed] = useState(false)
+  const [visibleClusters, setVisibleClusters] = useState([])
+    
+  // --- ESTADOS PARA BUSCA E FILTROS ---
   const [searchQuery, setSearchQuery] = useState('')
   const [filters, setFilters] = useState({
-    tipo: 'todos', // todos, Delivery, Balcão
-    pagamento: 'todos', // todos, pix, dinheiro, cartao, etc
+    tipo: 'todos',
+    pagamento: 'todos',
     valorMin: '',
     valorMax: '',
     apenasAgrupados: false,
-    apenasUrgentes: false, // pedidos com >30min
-    apenasRecorrentes: false, // clientes com 2+ pedidos
+    apenasUrgentes: false,
+    apenasRecorrentes: false,
   })
   const [showFilters, setShowFilters] = useState(false)
   
@@ -172,6 +175,7 @@ export default function OrderManager() {
     tempoRefresh: Math.max(10, Math.min(30, parseInt(localStorage.getItem('tempoRefresh')) || 10)),
     agruparPorDistancia: localStorage.getItem('agruparPorDistancia') === 'true',
     raioCluster: parseFloat(localStorage.getItem('raioCluster')) || 2,
+    enderecoRestaurante: localStorage.getItem('enderecoRestaurante') || 'Av. Paulista, 1578, São Paulo, SP',
   })
 
   // --- Monitorar estado de tela cheia ---
@@ -365,19 +369,18 @@ export default function OrderManager() {
     pedidos.filter(p => ['Saiu para entrega', 'Entregue', 'Cancelado'].includes(p.status)), 
   [pedidos])
 
-  // Aplica o hook APENAS nos pedidos ativos (não entregues)
+  // Aplica o hook APENAS nos pedidos ativos
   const clusteredActive = useOrderClustering(activeOrders, settings.agruparPorDistancia, settings.raioCluster)
 
-  // Recombina tudo para a interface continuar funcionando igual
+  // Recombina
   const pedidosComClusters = useMemo(() => 
     [...clusteredActive, ...finishedOrders], 
   [clusteredActive, finishedOrders])
 
-  // --- BUSCA E FILTROS INTELIGENTES ---
+  // --- BUSCA E FILTROS ---
   const pedidosFiltrados = useMemo(() => {
     let resultado = pedidosComClusters
 
-    // Busca fuzzy
     if (searchQuery.trim()) {
       const query = searchQuery.trim()
       resultado = resultado.filter(p => {
@@ -394,17 +397,14 @@ export default function OrderManager() {
       })
     }
 
-    // Filtro por tipo
     if (filters.tipo !== 'todos') {
       resultado = resultado.filter(p => p.tipo === filters.tipo)
     }
 
-    // Filtro por pagamento
     if (filters.pagamento !== 'todos') {
       resultado = resultado.filter(p => p.formaPagamento?.includes(filters.pagamento))
     }
 
-    // Filtro por valor
     if (filters.valorMin) {
       resultado = resultado.filter(p => p.total >= parseFloat(filters.valorMin))
     }
@@ -412,12 +412,10 @@ export default function OrderManager() {
       resultado = resultado.filter(p => p.total <= parseFloat(filters.valorMax))
     }
 
-    // Apenas agrupados
     if (filters.apenasAgrupados) {
       resultado = resultado.filter(p => p.clusterId && p.clusterSize > 1)
     }
 
-    // Apenas urgentes
     if (filters.apenasUrgentes) {
       resultado = resultado.filter(p => {
         const { isUrgent } = getTimeElapsed(p.createdAt)
@@ -425,7 +423,6 @@ export default function OrderManager() {
       })
     }
 
-    // Apenas recorrentes
     if (filters.apenasRecorrentes) {
       resultado = resultado.filter(p => p.cliente?.totalPedidos >= 2)
     }
@@ -450,7 +447,6 @@ export default function OrderManager() {
     }
   }
 
-  // Limpar filtros
   const clearFilters = () => {
     setSearchQuery('')
     setFilters({
@@ -463,6 +459,51 @@ export default function OrderManager() {
       apenasRecorrentes: false,
     })
   }
+
+  // Avançar cluster inteiro
+  const advanceCluster = async (clusterId) => {
+    const clusterOrders = pedidosComClusters.filter(p => p.clusterId === clusterId)
+    
+    for (const pedido of clusterOrders) {
+      await advanceStatus(pedido)
+    }
+    
+    await fetchPedidos()
+    
+    const stillActive = pedidosComClusters.some(p => 
+      p.clusterId === clusterId && 
+      p.status !== 'Entregue' && 
+      p.status !== 'Cancelado'
+    )
+    
+    if (!stillActive) {
+      setVisibleClusters(prev => prev.filter(id => id !== clusterId))
+    }
+  }
+
+  const toggleClusterPin = (clusterId) => {
+    setVisibleClusters(prev => 
+      prev.includes(clusterId)
+        ? prev.filter(id => id !== clusterId)
+        : [...prev, clusterId]
+    )
+  }
+
+  const uniqueClusters = useMemo(() => {
+    const clusterMap = new Map()
+    pedidosComClusters.forEach(p => {
+      if (p.clusterId && p.clusterSize > 1 && p.status !== 'Entregue' && p.status !== 'Cancelado') {
+        if (!clusterMap.has(p.clusterId)) {
+          clusterMap.set(p.clusterId, {
+            clusterId: p.clusterId,
+            clusterColor: p.clusterColor,
+            clusterSize: p.clusterSize
+          })
+        }
+      }
+    })
+    return Array.from(clusterMap.values())
+  }, [pedidosComClusters])
 
   const activeFiltersCount = useMemo(() => {
     let count = 0
@@ -479,7 +520,7 @@ export default function OrderManager() {
   return (
     <div className="min-h-screen bg-white text-gray-900 flex flex-col">
       
-      {/* Header Melhorado */}
+      {/* Header */}
       <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm shrink-0">
         <div className="w-full px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -520,7 +561,6 @@ export default function OrderManager() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Badge de Filtros Ativos */}
             {activeFiltersCount > 0 && (
               <div className="hidden md:flex items-center gap-2 px-3 py-2 bg-[#7f22fe]/10 border border-[#7f22fe]/30 rounded-lg">
                 <i className="fas fa-filter text-[#7f22fe] text-sm"></i>
@@ -535,7 +575,6 @@ export default function OrderManager() {
               </div>
             )}
 
-            {/* Alerta PIX Recusado */}
             {pedidosRecusados.length > 0 && (
               <button
                 onClick={() => setSelectedOrder(pedidosRecusados[0])}
@@ -547,7 +586,6 @@ export default function OrderManager() {
               </button>
             )}
 
-            {/* Alerta PIX Pendente */}
             {pedidosPendentes.length > 0 && (
               <div className="hidden md:flex items-center gap-2 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-700">
                 <i className="fas fa-clock"></i>
@@ -560,7 +598,6 @@ export default function OrderManager() {
               <span className="text-xl font-bold text-emerald-600">{formatCurrency(totalDia)}</span>
             </div>
             
-            {/* Botão de Filtros */}
             <button 
               onClick={() => setShowFilters(!showFilters)}
               className={`w-10 h-10 rounded-lg transition-all border ${
@@ -636,14 +673,24 @@ export default function OrderManager() {
         {/* Kanban Board */}
         <main className={`flex-1 p-6 overflow-x-auto overflow-y-hidden transition-all duration-300 bg-gray-50 ${showSettings || showFilters ? 'mr-96' : ''}`}>
           
-          <div className={`grid gap-4 h-full min-w-[1000px] lg:min-w-0 transition-all ${
+          <div className={`grid gap-4 h-full transition-all ${
             settings.aceitarAutomatico 
-              ? 'grid-cols-1 md:grid-cols-3'
-              : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4'
+              ? finishedColumnCollapsed
+                ? 'grid-cols-[1fr_1fr_80px]'
+                : 'grid-cols-[1fr_1fr_1fr]'
+              : finishedColumnCollapsed
+                ? 'grid-cols-[280px_1fr_1fr_80px]'
+                : 'grid-cols-[280px_1fr_1fr_280px]'
           }`}>
             
             {!settings.aceitarAutomatico && (
-              <KanbanColumn title="Novos Pedidos" count={columns.pendente.length} color="purple" icon="bell">
+              <KanbanColumn 
+                title="Novos Pedidos" 
+                count={columns.pendente.length} 
+                color="purple" 
+                icon="bell"
+                columnWidth="narrow"
+              >
                 {columns.pendente.map(p => (
                   <OrderCard 
                     key={p._id} 
@@ -654,12 +701,21 @@ export default function OrderManager() {
                     color="purple"
                     isLoading={loadingOrderId === p._id}
                     searchQuery={searchQuery}
+                    visibleClusters={visibleClusters}
+                    toggleClusterPin={toggleClusterPin}
+                    columnWidth="narrow"
                   />
                 ))}
               </KanbanColumn>
             )}
 
-            <KanbanColumn title="Em Preparação" count={columns.preparo.length} color="orange" icon="fire">
+            <KanbanColumn 
+              title="Em Preparação" 
+              count={columns.preparo.length} 
+              color="orange" 
+              icon="fire"
+              columnWidth="wide"
+            >
               {columns.preparo.map(p => (
                 <OrderCard 
                   key={p._id} 
@@ -670,26 +726,51 @@ export default function OrderManager() {
                   color="orange"
                   isLoading={loadingOrderId === p._id}
                   searchQuery={searchQuery}
+                  visibleClusters={visibleClusters}
+                  toggleClusterPin={toggleClusterPin}
+                  columnWidth="wide"
+                  restaurantAddress={settings.enderecoRestaurante}
+                  pedidos={pedidosComClusters}
                 />
               ))}
             </KanbanColumn>
 
-            <KanbanColumn title="Em Entrega" count={columns.entrega.length} color="blue" icon="shipping-fast">
+            <KanbanColumn 
+              title="Em Entrega" 
+              count={columns.entrega.length} 
+              color="blue" 
+              icon="shipping-fast"
+              columnWidth="wide"
+            >
               {columns.entrega.map(p => (
                 <OrderCard 
                   key={p._id} 
                   pedido={p} 
                   onClick={() => setSelectedOrder(p)} 
-                  onAdvance={() => advanceStatus(p)}
+                  onAdvance={() => advanceStatus(p)} 
                   onPrint={() => handlePrint(p)}
                   color="blue"
                   isLoading={loadingOrderId === p._id}
                   searchQuery={searchQuery}
+                  visibleClusters={visibleClusters}
+                  toggleClusterPin={toggleClusterPin}
+                  columnWidth="wide"
+                  restaurantAddress={settings.enderecoRestaurante}
+                  pedidos={pedidosComClusters}
                 />
               ))}
             </KanbanColumn>
 
-            <KanbanColumn title="Finalizados" count={columns.concluido.length} color="emerald" icon="check-circle">
+            <KanbanColumn 
+              title="Finalizados" 
+              count={columns.concluido.length} 
+              color="emerald" 
+              icon="check-circle"
+              isCollapsible={true}
+              isCollapsed={finishedColumnCollapsed}
+              onToggleCollapse={() => setFinishedColumnCollapsed(!finishedColumnCollapsed)}
+              columnWidth={finishedColumnCollapsed ? 'collapsed' : 'narrow'}
+            >
               {columns.concluido.map(p => (
                 <OrderCard 
                   key={p._id} 
@@ -699,6 +780,9 @@ export default function OrderManager() {
                   isDone 
                   color="emerald"
                   searchQuery={searchQuery}
+                  visibleClusters={visibleClusters}
+                  toggleClusterPin={toggleClusterPin}
+                  columnWidth="narrow"
                 />
               ))}
             </KanbanColumn>
@@ -730,7 +814,6 @@ export default function OrderManager() {
               )}
             </div>
 
-            {/* Tipo de Pedido */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block">
                 Tipo de Pedido
@@ -747,7 +830,6 @@ export default function OrderManager() {
               </select>
             </div>
 
-            {/* Forma de Pagamento */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block">
                 Forma de Pagamento
@@ -767,7 +849,6 @@ export default function OrderManager() {
               </select>
             </div>
 
-            {/* Faixa de Valor */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block">
                 Faixa de Valor
@@ -792,7 +873,6 @@ export default function OrderManager() {
               </div>
             </div>
 
-            {/* Filtros Booleanos */}
             <div className="space-y-3 pt-4 border-t border-gray-200">
               <FilterCheckbox
                 checked={filters.apenasAgrupados}
@@ -819,7 +899,6 @@ export default function OrderManager() {
               />
             </div>
 
-            {/* Estatísticas de Filtros */}
             <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
               <p className="text-xs font-bold text-gray-700 mb-2">Resultados:</p>
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -971,6 +1050,22 @@ export default function OrderManager() {
                       </div>
                     </div>
 
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block">
+                        Endereço do Restaurante
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.enderecoRestaurante}
+                        onChange={(e) => saveSettings({...settings, enderecoRestaurante: e.target.value})}
+                        placeholder="Ex: Av. Paulista, 1578, São Paulo, SP"
+                        className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
+                      />
+                      <p className="text-[10px] text-gray-500">
+                        Usado como ponto de partida nas rotas
+                      </p>
+                    </div>
+
                     <div className="p-4 rounded-lg bg-blue-50 border border-blue-200">
                       <div className="flex items-start gap-3">
                         <i className="fas fa-lightbulb text-blue-500 mt-0.5 text-lg"></i>
@@ -987,7 +1082,7 @@ export default function OrderManager() {
                             </li>
                             <li className="flex items-start gap-2">
                               <i className="fas fa-check text-blue-500 mt-0.5 text-[10px]"></i>
-                              <span>Otimize entregas agrupando rotas</span>
+                              <span>Clique em <strong>"Criar Rota"</strong> para abrir no Google Maps</span>
                             </li>
                           </ul>
                         </div>
@@ -1050,8 +1145,26 @@ export default function OrderManager() {
           onPrint={() => handlePrint(selectedOrder)}
           onAdvance={() => advanceStatus(selectedOrder)}
           isLoading={loadingOrderId === selectedOrder._id}
+          pedidos={pedidosComClusters}
+          onNavigate={setSelectedOrder}
+          restaurantAddress={settings.enderecoRestaurante}
         />
       )}
+
+      {/* Clusters Flutuantes */}
+      {uniqueClusters
+        .filter(c => visibleClusters.includes(c.clusterId))
+        .map(cluster => (
+          <ClusterFloatingCard
+            key={cluster.clusterId}
+            cluster={cluster}
+            pedidos={pedidosComClusters}
+            onAdvanceCluster={() => advanceCluster(cluster.clusterId)}
+            onOrderClick={setSelectedOrder}
+            onClose={() => toggleClusterPin(cluster.clusterId)}
+          />
+        ))
+      }
     </div>
   )
 }
@@ -1111,7 +1224,7 @@ function FilterCheckbox({ checked, onChange, label, icon, description }) {
   )
 }
 
-function KanbanColumn({ title, count, children, color, icon }) {
+function KanbanColumn({ title, count, children, color, icon, isCollapsible, isCollapsed, onToggleCollapse, columnWidth = 'normal' }) {
   const colorThemes = {
     purple: 'border-[#7f22fe] bg-purple-50',
     orange: 'border-orange-500 bg-orange-50',
@@ -1127,36 +1240,66 @@ function KanbanColumn({ title, count, children, color, icon }) {
   }
   
   return (
-    <div className="flex flex-col h-full rounded-xl bg-gray-100/50 border border-gray-200 overflow-hidden shadow-sm">
-      <div className={`px-4 py-3 border-b-2 bg-white flex justify-between items-center ${colorThemes[color].split(' ')[0]}`}>
+    <div className={`flex flex-col h-full rounded-xl bg-gray-100/50 border border-gray-200 overflow-hidden shadow-sm transition-all ${
+      isCollapsed ? 'max-w-[80px]' : ''
+    }`}>
+      <div 
+        className={`px-4 py-3 border-b-2 bg-white flex justify-between items-center ${colorThemes[color].split(' ')[0]} ${
+          isCollapsible ? 'cursor-pointer hover:bg-gray-50' : ''
+        }`}
+        onClick={isCollapsible ? onToggleCollapse : undefined}
+      >
         <div className={`font-bold flex items-center gap-2 ${textColors[color]}`}>
           <div className={`p-1.5 rounded-md bg-opacity-10 ${colorThemes[color].replace('border-', 'bg-')}`}>
-             <i className={`fas fa-${icon}`} aria-hidden="true"></i>
+            <i className={`fas fa-${icon}`} aria-hidden="true"></i>
           </div>
-          <span className="uppercase tracking-tight text-sm">{title}</span>
+          {!isCollapsed && <span className="uppercase tracking-tight text-sm">{title}</span>}
         </div>
-        <span className="bg-gray-800 px-2.5 py-0.5 rounded-md text-xs font-bold text-white" aria-label={`${count} pedidos`}>
-          {count}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="bg-gray-800 px-2.5 py-0.5 rounded-md text-xs font-bold text-white">
+            {count}
+          </span>
+          {isCollapsible && (
+            <i className={`fas fa-chevron-${isCollapsed ? 'right' : 'left'} text-xs`}></i>
+          )}
+        </div>
       </div>
       
-      <div className="flex-1 p-3 overflow-y-auto overflow-x-hidden custom-scrollbar">
-        {children.length > 0 ? (
-          <div className="flex flex-col gap-3">
-            {children}
-          </div>
-        ) : (
-          <div className="h-full flex flex-col items-center justify-center opacity-40">
-            <i className={`fas fa-${icon} text-3xl mb-2`} aria-hidden="true"></i>
-            <span className="text-sm font-medium">Vazio</span>
-          </div>
-        )}
-      </div>
+      {!isCollapsed && (
+        <div className="flex-1 p-3 overflow-y-auto overflow-x-hidden custom-scrollbar">
+          {children.length > 0 ? (
+            <div className={`flex flex-row flex-wrap gap-3 ${
+              columnWidth === 'narrow' ? '' : columnWidth === 'wide' ? '' : ''
+            }`}>
+              {children}
+            </div>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center opacity-40">
+              <i className={`fas fa-${icon} text-3xl mb-2`} aria-hidden="true"></i>
+              <span className="text-sm font-medium">Vazio</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-function OrderCard({ pedido, onClick, onAdvance, onPrint, isDone, color, isLoading, searchQuery }) {
+function OrderCard({ 
+  pedido, 
+  onClick, 
+  onAdvance, 
+  onPrint, 
+  isDone, 
+  color, 
+  isLoading, 
+  searchQuery, 
+  visibleClusters, 
+  toggleClusterPin,
+  columnWidth = 'normal',
+  restaurantAddress,
+  pedidos 
+}) {
   const colorThemes = {
     purple: 'border-l-4 border-l-[#7f22fe]',
     orange: 'border-l-4 border-l-orange-500',
@@ -1166,7 +1309,6 @@ function OrderCard({ pedido, onClick, onAdvance, onPrint, isDone, color, isLoadi
 
   const { minutes, isUrgent } = getTimeElapsed(pedido.createdAt)
 
-  // Highlight text baseado em busca
   const highlightText = (text) => {
     if (!searchQuery || !text) return text
     const parts = text.split(new RegExp(`(${searchQuery})`, 'gi'))
@@ -1177,10 +1319,39 @@ function OrderCard({ pedido, onClick, onAdvance, onPrint, isDone, color, isLoadi
     )
   }
 
+  // Função para criar rota no Google Maps
+  const createRoute = (e) => {
+    e.stopPropagation()
+    
+    if (!pedido.clusterId || !pedidos) return
+    
+    const clusterOrders = pedidos
+      .filter(p => p.clusterId === pedido.clusterId && p.enderecoEntrega)
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    
+    if (clusterOrders.length === 0) return
+    
+    const origin = restaurantAddress || 'Av. Paulista, 1578, São Paulo, SP'
+    
+    const waypoints = clusterOrders.map(p => {
+      const addr = p.enderecoEntrega
+      return `${addr.rua}, ${addr.numero}, ${addr.bairro}, ${addr.cidade}`
+    }).join('|')
+    
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(clusterOrders[clusterOrders.length - 1].enderecoEntrega.rua + ', ' + clusterOrders[clusterOrders.length - 1].enderecoEntrega.numero)}&waypoints=${encodeURIComponent(waypoints)}&travelmode=driving`
+    
+    window.open(mapsUrl, '_blank')
+  }
+
+  // Layout para coluna estreita (1 card por linha)
+  const isNarrowColumn = columnWidth === 'narrow'
+
   return (
     <div 
       onClick={onClick} 
-      className={`relative bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer border border-gray-200 group ${colorThemes[color]} w-full ${isUrgent && !isDone ? 'ring-red-400 ring-offset-2' : ''}`}
+      className={`relative bg-white p-3 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer border group ${colorThemes[color]} ${
+        isUrgent && !isDone ? 'ring-1 ring-red-400' : ''
+      } ${isNarrowColumn ? 'w-full' : 'max-w-[280px] flex-1'}`}
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -1188,457 +1359,419 @@ function OrderCard({ pedido, onClick, onAdvance, onPrint, isDone, color, isLoadi
           onClick()
         }
       }}
-      aria-label={`Pedido ${pedido._id.slice(-4).toUpperCase()}, ${pedido.cliente?.nome || 'Consumidor'}, ${formatCurrency(pedido.total)}`}
     >
-      {/* Badge de Urgência */}
-      {isUrgent && !isDone && (
-        <div className="absolute -top-2 -left-2 bg-red-500 text-white text-[10px] font-black px-2 py-1 rounded-full shadow-lg flex items-center gap-1 animate-pulse z-10">
-          <i className="fas fa-exclamation-triangle"></i>
-          <span>{minutes}min</span>
-        </div>
-      )}
-
-      {/* Cabeçalho do Card */}
-      <div className="flex justify-between items-start mb-3 border-b border-gray-100 pb-3">
-        <div>
-          <span className="text-sm font-black text-gray-900 block">
-             #{highlightText(pedido._id.slice(-4).toUpperCase())}
+      {/* Cabeçalho: ID, Hora, Preço e Badge de Tempo (reorganizado) */}
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex items-center gap-2 flex-1">
+          <span className="text-xs font-black text-gray-900">
+            #{highlightText(pedido._id.slice(-4).toUpperCase())}
           </span>
-          <span className="text-xs text-gray-600 font-semibold">
-            {formatTime(pedido.createdAt)} {minutes > 0 && <span className="text-[10px] text-gray-500">({minutes}min)</span>}
-          </span>
+          <span className="text-[10px] text-gray-500">{formatTime(pedido.createdAt)}</span>
         </div>
-        <div className="text-right">
-           <span className="text-base font-black text-gray-900 block">{formatCurrency(pedido.total)}</span>
-           <span className="text-xs uppercase font-bold text-gray-600">{pedido.tipo}</span>
+        
+        <div className="flex items-center gap-2">
+          {/* Badge de tempo ANTES do preço, sem sobreposição */}
+          {isUrgent && !isDone && (
+            <div className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shadow-md flex items-center gap-1">
+              <i className="fas fa-clock"></i>
+              {minutes}min
+            </div>
+          )}
+          <span className="text-sm font-black text-gray-900 whitespace-nowrap">{formatCurrency(pedido.total)}</span>
         </div>
       </div>
 
-      {/* Badge de Cluster com CORES */}
+      {/* Cliente */}
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 shrink-0">
+          <i className="fas fa-user text-[10px]"></i>
+        </div>
+        <p className="text-xs font-bold text-gray-900 truncate flex-1">
+          {highlightText(pedido.cliente?.nome || 'Consumidor')}
+        </p>
+        {pedido.cliente?.totalPedidos > 1 && (
+          <span className="text-[9px] text-emerald-600 font-bold">★{pedido.cliente.totalPedidos}</span>
+        )}
+      </div>
+
+      {/* Badge de Cluster COM BOTÃO "CRIAR ROTA" */}
       {pedido.clusterId && pedido.clusterSize > 1 && (
-        <div className={`mb-3 border-2 rounded-lg p-2.5 ${pedido.clusterColor.bg} ${pedido.clusterColor.border}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <div className={`w-7 h-7 rounded-full ${pedido.clusterColor.badge} flex items-center justify-center text-white font-bold text-xs shadow-sm`}>
-              {pedido.clusterSize}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className={`text-xs font-bold ${pedido.clusterColor.text} leading-tight`}>
+        <div className={`mb-2 p-2 rounded ${pedido.clusterColor.bg} ${pedido.clusterColor.border} border`}>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <div className="flex items-center gap-1.5 flex-1">
+              <div className={`w-5 h-5 rounded-full ${pedido.clusterColor.badge} flex items-center justify-center text-white font-bold text-[9px]`}>
+                {pedido.clusterSize}
+              </div>
+              <p className={`text-[10px] font-bold ${pedido.clusterColor.text}`}>
                 Rota Compartilhada
               </p>
-              <p className={`text-[10px] ${pedido.clusterColor.icon} font-medium`}>
-                {pedido.clusterSize} pedidos próximos
-              </p>
             </div>
-            <i className={`fas fa-route ${pedido.clusterColor.icon} text-sm`} aria-hidden="true"></i>
-          </div>
-          
-          {/* Lista de pedidos próximos */}
-          <div className="space-y-1 pt-2 border-t border-current opacity-30">
-            {pedido.clusterDistances.slice(0, 2).map((nearby, idx) => (
-              <div key={idx} className={`flex items-center gap-2 text-[10px] ${pedido.clusterColor.text}`}>
-                <i className="fas fa-arrow-right text-[8px]" aria-hidden="true"></i>
-                <span className="font-bold">#{nearby.orderNumber}</span>
-                <span className="opacity-75">→ {nearby.distance.toFixed(1)}km</span>
-              </div>
-            ))}
-            {pedido.clusterDistances.length > 2 && (
-              <div className={`text-[9px] ${pedido.clusterColor.text} opacity-60 font-medium pl-4`}>
-                +{pedido.clusterDistances.length - 2} mais...
-              </div>
-            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleClusterPin(pedido.clusterId)
+              }}
+              className={`w-5 h-5 rounded flex items-center justify-center text-xs transition-all ${
+                visibleClusters.includes(pedido.clusterId)
+                  ? `${pedido.clusterColor.badge} text-white`
+                  : 'bg-white hover:bg-gray-100'
+              }`}
+              title="Fixar cluster"
+            >
+              <i className="fas fa-thumbtack"></i>
+            </button>
           </div>
         </div>
       )}
 
-      <div className="flex items-center gap-2 mb-3 bg-gray-50 p-2 rounded border border-gray-100">
-        <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">
-          <i className="fas fa-user text-xs" aria-hidden="true"></i>
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-gray-900 truncate">
-            {highlightText(pedido.cliente?.nome || 'Consumidor')}
-          </p>
-          {pedido.cliente?.totalPedidos > 1 && (
-            <p className="text-[10px] text-emerald-600 font-bold leading-none">
-              ★ {pedido.cliente.totalPedidos}º Pedido
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Lista de Itens */}
-      <div className="space-y-2 mb-4 min-h-[80px]">
-        {pedido.itens.map((item, idx) => (
-          <div key={idx} className="text-sm leading-relaxed">
-            <div className="flex items-start gap-1">
-              <span className="font-black text-gray-900 min-w-[24px]">{item.quantidade}x</span>
-              <span className="text-gray-800 font-semibold flex-1">{highlightText(item.nome)}</span>
-            </div>
-            
-            {item.complementos?.length > 0 && (
-              <p className="text-xs text-gray-600 ml-6 mt-1 leading-snug font-medium">
-                + {item.complementos.join(', ')}
-              </p>
-            )}
-            
-            {item.obs && (
-              <div className="text-xs bg-yellow-100 text-yellow-900 px-2 py-1 rounded mt-1 ml-6 font-bold border border-yellow-300 inline-block">
-                ⚠️ {item.obs}
-              </div>
-            )}
+      {/* Itens (resumido) */}
+      <div className="text-[11px] mb-2 space-y-1">
+        {pedido.itens.slice(0, 2).map((item, idx) => (
+          <div key={idx} className="flex items-start gap-1">
+            <span className="font-black text-gray-900 min-w-[18px]">{item.quantidade}x</span>
+            <span className="text-gray-700 font-semibold truncate flex-1">{item.nome}</span>
           </div>
         ))}
+        {pedido.itens.length > 2 && (
+          <p className="text-[9px] text-gray-500 font-medium">+{pedido.itens.length - 2} itens</p>
+        )}
       </div>
 
-      {/* Rodapé com Ação Rápida */}
+      {/* Ações */}
       {!isDone && (
-        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+        <div className="flex gap-1.5">
           <button 
-            onClick={(e) => { e.stopPropagation(); onPrint(pedido); }}
-            className="p-2 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-            title="Imprimir Rápido"
-            aria-label="Imprimir pedido"
+            onClick={(e) => { e.stopPropagation(); onPrint(); }}
+            className="p-1.5 rounded hover:bg-gray-100 text-gray-500 text-xs"
+            title="Imprimir"
           >
-             <i className="fas fa-print text-sm" aria-hidden="true"></i>
+            <i className="fas fa-print"></i>
           </button>
-          
           <button 
             onClick={(e) => { e.stopPropagation(); onAdvance() }}
             disabled={isLoading}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-black text-white shadow-sm flex items-center justify-center gap-2 transition-all ${
-              isLoading 
-                ? 'bg-gray-400 cursor-wait' 
-                : 'bg-gray-900 hover:bg-black active:scale-95'
+            className={`flex-1 py-1.5 rounded text-[10px] font-black text-white shadow-sm transition-all ${
+              isLoading ? 'bg-gray-400' : 'bg-gray-900 hover:bg-black'
             }`}
-            aria-label="Avançar para próxima etapa"
           >
-            {isLoading ? (
-              <>
-                <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
-                <span>PROCESSANDO...</span>
-              </>
-            ) : (
-              <>
-                <span>AVANÇAR</span>
-                <i className="fas fa-chevron-right text-xs" aria-hidden="true"></i>
-              </>
-            )}
+            {isLoading ? 'PROC...' : 'AVANÇAR'}
           </button>
         </div>
       )}
-      
-      {/* Ícone de expandir */}
-      <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full w-6 h-6 flex items-center justify-center shadow-md border border-gray-200">
-         <i className="fas fa-expand-alt text-gray-500 text-xs" aria-hidden="true"></i>
-      </div>
     </div>
   )
 }
 
-function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading }) {
-   const handleWhatsApp = () => {
-    if (!pedido.cliente?.telefone) return
-    const phone = pedido.cliente.telefone.replace(/\D/g, '')
+function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading, pedidos, onNavigate, restaurantAddress }) {
+  const [currentPedido, setCurrentPedido] = useState(pedido)
+
+  // Atualizar quando pedido externo mudar
+  useEffect(() => {
+    setCurrentPedido(pedido)
+  }, [pedido])
+
+  const handleWhatsApp = () => {
+    if (!currentPedido.cliente?.telefone) return
+    const phone = currentPedido.cliente.telefone.replace(/\D/g, '')
     const fullPhone = phone.length <= 11 ? `55${phone}` : phone
-    
-    const msg = `Olá ${pedido.cliente.nome}, tudo bem? Aqui é do NexFood. Estamos entrando em contato sobre seu pedido #${pedido._id.slice(-4).toUpperCase()}.`
-    
+    const msg = `Olá ${currentPedido.cliente.nome}, tudo bem? Aqui é do NexFood. Estamos entrando em contato sobre seu pedido #${currentPedido._id.slice(-4).toUpperCase()}.`
     window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, '_blank')
   }
-  
-  const isPixRecusado = (pedido.formaPagamento === 'pix' || pedido.formaPagamento === 'online_pix') 
-                         && pedido.statusPagamento === 'recusado'
 
-  const { minutes } = getTimeElapsed(pedido.createdAt)
-
-  // Função para abrir no Google Maps
   const openGoogleMaps = () => {
-    if (!pedido.enderecoEntrega) return
-    
-    const { rua, numero, bairro, cidade } = pedido.enderecoEntrega
+    if (!currentPedido.enderecoEntrega) return
+    const { rua, numero, bairro, cidade } = currentPedido.enderecoEntrega
     const address = `${rua}, ${numero}, ${bairro}, ${cidade}`
-    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
-    
-    window.open(url, '_blank')
+    window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`, '_blank')
   }
 
-  const openClusterRoute = () => {
-    if (!pedido.clusterId || !pedido.clusterDistances.length) return
-    
-    // 1. Tenta pegar o endereço do restaurante salvo no localStorage (se existir)
-    // 2. Caso contrário, usa um endereço FIXO (Edite a string abaixo com o endereço real do seu restaurante)
-    const user = JSON.parse(localStorage.getItem('nexfood_user') || '{}')
-    const restauranteEndereco = user.endereco || "Av. Paulista, 1000, São Paulo - SP" // <--- EDITE AQUI SEU ENDEREÇO PADRÃO
+  // Criar rota do cluster
+  const createClusterRoute = () => {
+  if (!currentPedido?.clusterId || !pedidos?.length) return
 
-    // Criar waypoints para rota (paradas intermediárias)
-    const waypoints = pedido.clusterDistances
-      .map(nearby => nearby.address)
-      .join('|')
-    
-    // O destino final é o endereço deste pedido atual
-    const destination = `${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}, ${pedido.enderecoEntrega.cidade}`
+  const clusterOrders = pedidos
+    .filter(p => p.clusterId === currentPedido.clusterId && p.enderecoEntrega)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
 
-    // Monta a URL: Origem (Restaurante) -> Paradas (Outros pedidos) -> Destino (Pedido atual)
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(restauranteEndereco)}&destination=${encodeURIComponent(destination)}&waypoints=${encodeURIComponent(waypoints)}&travelmode=driving`
-    
-    window.open(url, '_blank')
+  if (clusterOrders.length === 0) return
+
+  const origin = restaurantAddress || 'Av. Paulista, 1578, São Paulo, SP'
+
+  const destinationAddress = clusterOrders[clusterOrders.length - 1].enderecoEntrega
+  const destination = `${destinationAddress.rua}, ${destinationAddress.numero}, ${destinationAddress.bairro}, ${destinationAddress.cidade}`
+
+  const waypoints = clusterOrders
+    .slice(0, -1) // 👈 remove o último
+    .map(p => {
+      const addr = p.enderecoEntrega
+      return `${addr.rua}, ${addr.numero}, ${addr.bairro}, ${addr.cidade}`
+    })
+    .join('|')
+
+  const mapsUrl =
+    `https://www.google.com/maps/dir/?api=1` +
+    `&origin=${encodeURIComponent(origin)}` +
+    `&destination=${encodeURIComponent(destination)}` +
+    (waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : '') +
+    `&travelmode=driving`
+
+  window.open(mapsUrl, '_blank')
+}
+
+
+  // Navegar para pedido próximo
+  const navigateToOrder = (orderId) => {
+    const nextPedido = pedidos.find(p => p._id === orderId)
+    if (nextPedido) {
+      setCurrentPedido(nextPedido)
+      onNavigate(nextPedido)
+    }
   }
+
+  // Navegação prev/next no cluster
+  const clusterOrders = pedidos?.filter(p => p.clusterId === currentPedido.clusterId) || []
+  const currentIndexInCluster = clusterOrders.findIndex(p => p._id === currentPedido._id)
+  const hasPrev = currentIndexInCluster > 0
+  const hasNext = currentIndexInCluster < clusterOrders.length - 1
+
+  const goToPrev = () => {
+    if (hasPrev) {
+      const prevPedido = clusterOrders[currentIndexInCluster - 1]
+      setCurrentPedido(prevPedido)
+      onNavigate(prevPedido)
+    }
+  }
+
+  const goToNext = () => {
+    if (hasNext) {
+      const nextPedido = clusterOrders[currentIndexInCluster + 1]
+      setCurrentPedido(nextPedido)
+      onNavigate(nextPedido)
+    }
+  }
+
+  const { minutes } = getTimeElapsed(currentPedido.createdAt)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       
-      <div className="relative w-full max-w-3xl bg-white border border-gray-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
-        {/* Header */}
-        <div className="bg-gray-50 px-6 py-5 flex items-center justify-between border-b border-gray-200">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-[#7f22fe] flex items-center justify-center shadow-sm">
-              <i className="fas fa-receipt text-white" aria-hidden="true"></i>
+        {/* Header com navegação INTRA-GRUPO */}
+        <div className="bg-gray-50 px-6 py-5 border-b">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-lg bg-[#7f22fe] flex items-center justify-center">
+                <i className="fas fa-receipt text-white"></i>
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-3">
+                  Pedido #{currentPedido._id.slice(-4).toUpperCase()}
+                  {minutes > 0 && <span className="text-sm font-normal text-gray-600">({minutes}min)</span>}
+                </h2>
+                <span className="text-xs px-3 py-1 rounded-full bg-purple-100 text-[#7f22fe] font-medium">
+                  {currentPedido.status}
+                </span>
+              </div>
             </div>
-            <div>
-              <h2 id="modal-title" className="text-xl font-bold text-gray-900 flex items-center gap-3">
-                Pedido #{pedido._id.slice(-4).toUpperCase()}
-                {minutes > 0 && (
-                  <span className="text-sm font-normal text-gray-600">({minutes} minutos atrás)</span>
-                )}
-              </h2>
-              <span className="text-xs px-3 py-1 rounded-full bg-purple-100 text-[#7f22fe] border border-purple-200 font-medium inline-block mt-1">
-                {pedido.status}
-              </span>
-            </div>
+            <button onClick={onClose} className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200">
+              <i className="fas fa-times"></i>
+            </button>
           </div>
-          <button 
-            onClick={onClose} 
-            className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors"
-            aria-label="Fechar modal"
-          >
-            <i className="fas fa-times" aria-hidden="true"></i>
-          </button>
+
+          {/* NAVEGAÇÃO PREV/NEXT DENTRO DO GRUPO */}
+          {currentPedido.clusterId && clusterOrders.length > 1 && (
+            <div className="flex items-center gap-3 mt-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
+              <button
+                onClick={goToPrev}
+                disabled={!hasPrev}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                  hasPrev
+                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                <i className="fas fa-chevron-left"></i>
+                Anterior
+              </button>
+              
+              <div className="flex-1 text-center">
+                <p className="text-xs font-bold text-blue-900">
+                  Pedido {currentIndexInCluster + 1} de {clusterOrders.length}
+                </p>
+                <p className="text-[10px] text-blue-700">do mesmo grupo</p>
+              </div>
+              
+              <button
+                onClick={goToNext}
+                disabled={!hasNext}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                  hasNext
+                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                Próximo
+                <i className="fas fa-chevron-right"></i>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Content */}
         <div className="overflow-y-auto p-6 space-y-6 flex-1">
+          {/* WhatsApp */}
+          {currentPedido.cliente?.telefone && (
+            <button 
+              onClick={handleWhatsApp}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg font-bold"
+            >
+              <i className="fab fa-whatsapp text-xl"></i>
+              <span>Conversar com {currentPedido.cliente.nome.split(' ')[0]} ({currentPedido.cliente.telefone})</span>
+            </button>
+          )}
 
-            {/* Alerta PIX Recusado */}
-            {isPixRecusado && (
-              <div className="rounded-xl bg-red-50 border-2 border-red-400 p-6" role="alert">
-                <div className="flex items-start gap-4 text-red-900">
-                  <div className="w-14 h-14 rounded-lg bg-red-500 flex items-center justify-center shrink-0">
-                    <i className="fas fa-ban text-2xl text-white" aria-hidden="true"></i>
+          {/* Itens */}
+          <div className="space-y-3">
+            {currentPedido.itens.map((item, idx) => (
+              <div key={idx} className="bg-gray-50 border rounded-lg p-4">
+                <div className="flex gap-4 items-start">
+                  <div className="w-10 h-10 rounded-lg bg-[#7f22fe] flex items-center justify-center font-bold text-white">
+                    {item.quantidade}x
                   </div>
                   <div className="flex-1">
-                    <p className="font-black text-lg mb-2">⚠️ Pagamento Recusado</p>
-                    <p className="text-sm leading-relaxed mb-3">
-                      O pagamento PIX foi recusado. Este pedido <strong>não deve ser preparado</strong>.
-                    </p>
-                    <div className="bg-white rounded-lg p-3 border border-red-200">
-                      <p className="text-xs font-bold mb-1">AÇÕES SUGERIDAS:</p>
-                      <ul className="text-xs space-y-1 ml-4 list-disc">
-                        <li>Entre em contato com o cliente pelo telefone</li>
-                        <li>Ofereça nova tentativa de pagamento</li>
-                        <li>Considere converter para dinheiro/cartão na entrega</li>
-                      </ul>
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="text-gray-900 font-semibold">{item.nome}</p>
+                      <p className="text-gray-900 font-bold">{formatCurrency(item.precoUnitario * item.quantidade)}</p>
                     </div>
+                    {item.complementos?.length > 0 && (
+                      <p className="text-sm text-gray-600">+ {item.complementos.join(', ')}</p>
+                    )}
+                    {item.obs && (
+                      <div className="inline-flex items-center gap-2 text-xs bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-lg mt-2">
+                        <i className="fas fa-sticky-note"></i>
+                        {item.obs}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-            )}
+            ))}
+          </div>
 
-            {pedido.cliente?.telefone && (
-              <button 
-                onClick={handleWhatsApp}
-                className="w-full mb-2 flex items-center justify-center gap-2 py-3 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg transition-colors font-bold"
-                aria-label={`Conversar com ${pedido.cliente.nome} no WhatsApp`}
-              >
-                <i className="fab fa-whatsapp text-xl" aria-hidden="true"></i>
-                <span>Conversar com {pedido.cliente.nome.split(' ')[0]} ({pedido.cliente.telefone})</span>
-              </button>
-            )}
+          {/* Entrega + Pagamento */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-lg bg-blue-50 border border-blue-200 p-5">
+              <h3 className="font-bold text-blue-900 uppercase text-xs mb-4 flex items-center gap-2">
+                <i className="fas fa-map-marker-alt"></i> Entrega
+              </h3>
+              {currentPedido.enderecoEntrega ? (
+                <>
+                  <p className="text-gray-900 font-semibold text-sm">{currentPedido.enderecoEntrega.rua}, {currentPedido.enderecoEntrega.numero}</p>
+                  <p className="text-gray-600 text-xs mb-3">{currentPedido.enderecoEntrega.bairro} - {currentPedido.enderecoEntrega.cidade}</p>
+                  <div className="space-y-2">
+                    <button
+                      onClick={openGoogleMaps}
+                      className="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold"
+                    >
+                      <i className="fas fa-map-marked-alt mr-2"></i>Ver no Mapa
+                    </button>
+                    
+                    {/* BOTÃO CRIAR ROTA no modal */}
+                    {currentPedido.clusterId && clusterOrders.length > 1 && (
+                      <button
+                        onClick={createClusterRoute}
+                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold"
+                      >
+                        <i className="fas fa-route mr-2"></i>Criar Rota ({clusterOrders.length} pedidos)
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center gap-2 text-gray-700 bg-white p-3 rounded">
+                  <i className="fas fa-store"></i>
+                  <span className="font-medium">Retirada no Balcão</span>
+                </div>
+              )}
 
-            {/* Itens */}
-            <div className="space-y-3">
-              {pedido.itens.map((item, idx) => (
-                <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-4 hover:bg-gray-100 transition-colors">
-                  <div className="flex gap-4 items-start">
-                    <div className="w-10 h-10 rounded-lg bg-[#7f22fe] flex items-center justify-center font-bold text-white shadow-sm shrink-0">
-                      {item.quantidade}x
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-start mb-2">
-                        <p className="text-gray-900 font-semibold text-base">{item.nome}</p>
-                        <p className="text-gray-900 font-bold text-base">{formatCurrency(item.precoUnitario * item.quantidade)}</p>
-                      </div>
-                      {item.complementos?.length > 0 && (
-                        <p className="text-sm text-gray-600 mb-2">+ {item.complementos.join(', ')}</p>
-                      )}
-                      {item.obs && (
-                        <div className="inline-flex items-center gap-2 text-xs bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-lg border border-yellow-200 font-medium">
-                          <i className="fas fa-sticky-note" aria-hidden="true"></i>
-                          {item.obs}
+              {/* Lista compacta de pedidos do grupo */}
+              {currentPedido.clusterId && currentPedido.clusterDistances?.length > 0 && (
+                <div className="mt-4 bg-white rounded-lg p-4 border border-blue-200">
+                  <p className="text-xs font-bold text-blue-900 mb-3 flex items-center gap-2">
+                    <i className="fas fa-route"></i>Outros Pedidos da Rota:
+                  </p>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {currentPedido.clusterDistances.map((nearby, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => navigateToOrder(nearby.orderId)}
+                        className="w-full flex items-center justify-between p-2 rounded bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all text-left"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-bold flex items-center justify-center">
+                            {idx + 1}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-blue-900">#{nearby.orderNumber}</p>
+                            <p className="text-[10px] text-gray-600 truncate max-w-[150px]">{nearby.address}</p>
+                          </div>
                         </div>
-                      )}
-                    </div>
+                        <span className="text-xs font-bold bg-blue-500 text-white px-2 py-1 rounded">
+                          {nearby.distance.toFixed(1)}km
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ))}
+              )}
             </div>
 
-            {/* Info Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-lg bg-blue-50 border border-blue-200 p-5">
-                <h3 className="font-bold text-blue-900 uppercase text-xs mb-4 flex items-center gap-2">
-                  <i className="fas fa-map-marker-alt" aria-hidden="true"></i> Entrega
-                </h3>
-                <div className="space-y-2 text-sm">
-                  {pedido.enderecoEntrega ? (
-                    <>
-                      <p className="text-gray-900 font-semibold">{pedido.enderecoEntrega.rua}, {pedido.enderecoEntrega.numero}</p>
-                      <p className="text-gray-600 text-xs">{pedido.enderecoEntrega.bairro} - {pedido.enderecoEntrega.cidade}
-                        {pedido.enderecoEntrega.complemento && ` - ${pedido.enderecoEntrega.complemento}`}
-                      </p>
-                      
-                      {/* Botões de Mapa */}
-                      <div className="flex gap-2 mt-3">
-                        <button
-                          onClick={openGoogleMaps}
-                          className="flex-1 py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"
-                          aria-label="Abrir endereço no Google Maps"
-                        >
-                          <i className="fas fa-map-marked-alt" aria-hidden="true"></i>
-                          Ver no Mapa
-                        </button>
-                        
-                        {pedido.clusterId && pedido.clusterDistances.length > 0 && (
-                          <button
-                            onClick={openClusterRoute}
-                            className="flex-1 py-2 px-3 bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2"
-                            aria-label="Abrir rota otimizada no Google Maps"
-                          >
-                            <i className="fas fa-route" aria-hidden="true"></i>
-                            Rota Otimizada
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex items-center gap-2 text-gray-700 bg-white p-3 rounded border border-blue-200">
-                      <i className="fas fa-store" aria-hidden="true"></i>
-                      <span className="font-medium">Retirada no Balcão</span>
-                    </div>
-                  )}
+            <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-5">
+              <h3 className="font-bold text-emerald-900 uppercase text-xs mb-4 flex items-center gap-2">
+                <i className="fas fa-wallet"></i> Pagamento
+              </h3>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between text-gray-700">
+                  <span>Subtotal</span>
+                  <span className="font-semibold">{formatCurrency(currentPedido.subtotal)}</span>
                 </div>
-                
-                {/* Detalhes do Cluster na Modal */}
-                {pedido.clusterId && pedido.clusterSize > 1 && (
-                  <div className={`mt-4 ${pedido.clusterColor.bg} ${pedido.clusterColor.border}`}>
-                    <div className={`bg-white rounded-lg p-4 border ${pedido.clusterColor.border}`}>
-                      <p className={`text-xs font-bold ${pedido.clusterColor.text} mb-3 flex items-center gap-2`}>
-                        <i className="fas fa-map-marked-alt" aria-hidden="true"></i>
-                        Pedidos na Mesma Rota:
-                      </p>
-                      <div className="space-y-2">
-                        {pedido.clusterDistances.map((nearby, idx) => (
-                          <div key={idx} className={`flex items-center justify-between p-2 rounded ${pedido.clusterColor.bg} border ${pedido.clusterColor.border}`}>
-                            <div className="flex items-center gap-3">
-                              <div className={`w-6 h-6 rounded-full ${pedido.clusterColor.badge} text-white text-xs font-bold flex items-center justify-center`}>
-                                {idx + 1}
-                              </div>
-                              <div>
-                                <p className={`text-xs font-bold ${pedido.clusterColor.text}`}>
-                                  Pedido #{nearby.orderNumber}
-                                </p>
-                                <p className={`text-[10px] ${pedido.clusterColor.icon} truncate max-w-[200px]`}>
-                                  {nearby.address}
-                                </p>
-                              </div>
-                            </div>
-                            <div className={`text-right`}>
-                              <p className={`text-xs font-black ${pedido.clusterColor.badge} text-white px-2 py-1 rounded`}>
-                                {nearby.distance.toFixed(1)} km
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                {currentPedido.desconto > 0 && (
+                  <div className="flex justify-between text-emerald-700">
+                    <span>Desconto</span>
+                    <span className="font-semibold">-{formatCurrency(currentPedido.desconto)}</span>
                   </div>
                 )}
-              </div>
-
-              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-5">
-                <h3 className="font-bold text-emerald-900 uppercase text-xs mb-4 flex items-center gap-2">
-                  <i className="fas fa-wallet" aria-hidden="true"></i> Pagamento
-                </h3>
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between text-gray-700">
-                    <span>Subtotal</span>
-                    <span className="font-semibold">{formatCurrency(pedido.subtotal)}</span>
-                  </div>
-                  {pedido.desconto > 0 && (
-                    <div className="flex justify-between text-emerald-700">
-                      <span>Desconto</span>
-                      <span className="font-semibold">-{formatCurrency(pedido.desconto)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-gray-900 font-bold text-xl pt-3 border-t border-emerald-200">
-                    <span>Total</span>
-                    <span className="text-[#7f22fe]">
-                      {formatCurrency(pedido.total)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-center gap-3 mt-4 p-3 rounded-lg bg-white border border-emerald-200">
-                    <span className="text-xs uppercase font-bold text-gray-900 bg-gray-100 px-3 py-1 rounded border border-gray-300">
-                      {pedido.formaPagamento?.replace(/_/g, ' ')}
-                    </span>
-                    <span className={`text-xs font-bold px-2 py-1 rounded ${
-                      pedido.statusPagamento === 'aprovado' 
-                        ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' 
-                        : pedido.statusPagamento === 'recusado'
-                        ? 'bg-red-100 text-red-700 border border-red-300'
-                        : 'bg-yellow-100 text-yellow-700 border border-yellow-300'
-                    }`}>
-                      {pedido.statusPagamento?.replace(/_/g, ' ').toUpperCase()}
-                    </span>
-                  </div>
+                <div className="flex justify-between text-gray-900 font-bold text-xl pt-3 border-t border-emerald-200">
+                  <span>Total</span>
+                  <span className="text-[#7f22fe]">{formatCurrency(currentPedido.total)}</span>
+                </div>
+                <div className="flex items-center justify-center gap-3 p-3 rounded-lg bg-white border border-emerald-200">
+                  <span className="text-xs uppercase font-bold">{currentPedido.formaPagamento?.replace(/_/g, ' ')}</span>
+                  <span className={`text-xs font-bold px-2 py-1 rounded ${
+                    currentPedido.statusPagamento === 'aprovado' ? 'bg-emerald-100 text-emerald-700' : 'bg-yellow-100 text-yellow-700'
+                  }`}>
+                    {currentPedido.statusPagamento?.toUpperCase()}
+                  </span>
                 </div>
               </div>
             </div>
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="bg-gray-50 p-6 border-t border-gray-200 flex gap-4">
-          <button 
-            onClick={onPrint} 
-            className="flex-1 py-4 rounded-lg bg-white hover:bg-gray-100 border-2 border-gray-300 text-gray-700 font-bold transition-colors"
-            aria-label="Imprimir pedido"
-          >
-            <i className="fas fa-print mr-2" aria-hidden="true"></i>
-            <span>Imprimir</span>
+        <div className="bg-gray-50 p-6 border-t flex gap-4">
+          <button onClick={() => onPrint(currentPedido)} className="flex-1 py-4 rounded-lg bg-white hover:bg-gray-100 border-2 border-gray-300 font-bold">
+            <i className="fas fa-print mr-2"></i>Imprimir
           </button>
-          
-          {pedido.status !== 'Entregue' && pedido.status !== 'Cancelado' && !isPixRecusado && (
+          {currentPedido.status !== 'Entregue' && (
             <button 
-              onClick={() => { onAdvance(); onClose(); }} 
+              onClick={() => { onAdvance(currentPedido); onClose(); }} 
               disabled={isLoading}
-              className={`flex-[2] py-4 rounded-lg font-bold transition-all text-white shadow-md ${
-                isLoading 
-                  ? 'bg-gray-400 cursor-wait' 
-                  : 'bg-[#7f22fe] hover:bg-[#6b1de0]'
-              }`}
-              aria-label="Avançar para próxima etapa"
+              className="flex-[2] py-4 rounded-lg font-bold text-white bg-[#7f22fe] hover:bg-[#6b1de0]"
             >
-              {isLoading ? (
-                <>
-                  <i className="fas fa-spinner fa-spin mr-2" aria-hidden="true"></i>
-                  <span>Processando...</span>
-                </>
-              ) : (
-                <>
-                  <i className="fas fa-arrow-right mr-2" aria-hidden="true"></i>
-                  <span>Avançar Etapa</span>
-                </>
-              )}
+              <i className="fas fa-arrow-right mr-2"></i>Avançar Etapa
             </button>
           )}
         </div>
