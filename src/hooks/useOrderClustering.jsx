@@ -1,125 +1,166 @@
 import { useMemo } from 'react'
 
-// Paleta de cores para clusters (até 8 grupos diferentes)
-const CLUSTER_COLORS = [
-  { bg: 'bg-blue-50', border: 'border-blue-300', text: 'text-blue-900', icon: 'text-blue-500', badge: 'bg-blue-500' },
-  { bg: 'bg-purple-50', border: 'border-purple-300', text: 'text-purple-900', icon: 'text-purple-500', badge: 'bg-purple-500' },
-  { bg: 'bg-pink-50', border: 'border-pink-300', text: 'text-pink-900', icon: 'text-pink-500', badge: 'bg-pink-500' },
-  { bg: 'bg-indigo-50', border: 'border-indigo-300', text: 'text-indigo-900', icon: 'text-indigo-500', badge: 'bg-indigo-500' },
-  { bg: 'bg-cyan-50', border: 'border-cyan-300', text: 'text-cyan-900', icon: 'text-cyan-500', badge: 'bg-cyan-500' },
-  { bg: 'bg-teal-50', border: 'border-teal-300', text: 'text-teal-900', icon: 'text-teal-500', badge: 'bg-teal-500' },
-  { bg: 'bg-emerald-50', border: 'border-emerald-300', text: 'text-emerald-900', icon: 'text-emerald-500', badge: 'bg-emerald-500' },
-  { bg: 'bg-amber-50', border: 'border-amber-300', text: 'text-amber-900', icon: 'text-amber-500', badge: 'bg-amber-500' },
-]
+// Gera uma cor consistente baseada no ID do cluster (Hashed Color)
+// Garante que o Cluster A sempre tenha a mesma cor, sem limitar a 8 opções.
+const getClusterColor = (id) => {
+  const colors = [
+    { bg: 'bg-blue-100', border: 'border-blue-300', text: 'text-blue-900', badge: 'bg-blue-600' },
+    { bg: 'bg-purple-100', border: 'border-purple-300', text: 'text-purple-900', badge: 'bg-purple-600' },
+    { bg: 'bg-emerald-100', border: 'border-emerald-300', text: 'text-emerald-900', badge: 'bg-emerald-600' },
+    { bg: 'bg-amber-100', border: 'border-amber-300', text: 'text-amber-900', badge: 'bg-amber-600' },
+    { bg: 'bg-rose-100', border: 'border-rose-300', text: 'text-rose-900', badge: 'bg-rose-600' },
+    { bg: 'bg-cyan-100', border: 'border-cyan-300', text: 'text-cyan-900', badge: 'bg-cyan-600' },
+    { bg: 'bg-indigo-100', border: 'border-indigo-300', text: 'text-indigo-900', badge: 'bg-indigo-600' },
+    { bg: 'bg-lime-100', border: 'border-lime-300', text: 'text-lime-900', badge: 'bg-lime-600' },
+    { bg: 'bg-fuchsia-100', border: 'border-fuchsia-300', text: 'text-fuchsia-900', badge: 'bg-fuchsia-600' },
+  ]
+  
+  // Hash simples para escolher a cor
+  let hash = 0
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  
+  const index = Math.abs(hash) % colors.length
+  return colors[index]
+}
 
-export function useOrderClustering(pedidos, enabled, radiusKm = 2) {
+// Cálculo de distância Haversine (Km)
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity
+  const R = 6371 
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  return R * c
+}
+
+/**
+ * Hook Inteligente de Clusterização
+ * @param {Array} pedidos - Lista de pedidos
+ * @param {Boolean} enabled - Se a funcionalidade está ativa
+ * @param {Number} radiusKm - Distância máxima entre pontos (ex: 2km)
+ * @param {Number} maxTimeWindowMinutes - Diferença máxima de tempo entre o 1º e o último pedido do grupo (ex: 30min)
+ * @param {Number} maxOrdersPerCluster - Capacidade máxima da bag do motoboy (ex: 4 ou 5)
+ */
+export function useOrderClustering(
+  pedidos, 
+  enabled, 
+  radiusKm = 2, 
+  maxTimeWindowMinutes = 40, 
+  maxOrdersPerCluster = 5
+) {
   return useMemo(() => {
+    // 1. Reset inicial: Se desativado ou vazio
     if (!enabled || !pedidos.length) {
-      return pedidos.map(p => ({ ...p, clusterId: null, clusterSize: 1, clusterColor: null, clusterOrders: [] }))
+      return pedidos.map(p => ({ ...p, clusterId: null, clusterSize: 1, clusterColor: null }))
     }
 
-    // Filtra apenas pedidos com delivery e endereço válido
-    const deliveryOrders = pedidos.filter(p => 
+    // 2. Separar pedidos que PODEM ser agrupados (Delivery + Pendente/Preparo + Com LatLong)
+    // Ignoramos pedidos que já saíram para entrega para não bagunçar a lógica ativa
+    const activeDeliveryOrders = pedidos.filter(p => 
       p.tipo === 'Delivery' && 
       p.enderecoEntrega?.latitude && 
-      p.enderecoEntrega?.longitude
-    )
+      p.enderecoEntrega?.longitude &&
+      ['Recebido', 'Em preparação'].includes(p.status)
+    ).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)) // Ordena por antiguidade (FIFO)
 
-    if (deliveryOrders.length < 2) {
-      return pedidos.map(p => ({ ...p, clusterId: null, clusterSize: 1, clusterColor: null, clusterOrders: [] }))
-    }
-
-    // Calcula distância entre dois pontos (Haversine)
-    const getDistance = (lat1, lon1, lat2, lon2) => {
-      const R = 6371 // Raio da Terra em km
-      const dLat = (lat2 - lat1) * Math.PI / 180
-      const dLon = (lon2 - lon1) * Math.PI / 180
-      const a = 
-        Math.sin(dLat/2) * Math.sin(dLat/2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon/2) * Math.sin(dLon/2)
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-      return R * c
-    }
-
-    // Algoritmo de clusterização DBSCAN
     const clusters = []
-    const visited = new Set()
+    const processedIds = new Set()
 
-    deliveryOrders.forEach((order, idx) => {
-      if (visited.has(order._id)) return
+    // 3. Algoritmo Greedy com Restrições (Tempo + Espaço + Capacidade)
+    activeDeliveryOrders.forEach((baseOrder) => {
+      if (processedIds.has(baseOrder._id)) return
 
-      const cluster = [order]
-      visited.add(order._id)
+      // Inicia um novo cluster com o pedido mais antigo disponível
+      const currentCluster = [baseOrder]
+      processedIds.add(baseOrder._id)
+      const baseTime = new Date(baseOrder.createdAt).getTime()
 
-      // Busca vizinhos próximos
-      deliveryOrders.forEach((otherOrder, otherIdx) => {
-        if (idx === otherIdx || visited.has(otherOrder._id)) return
+      // Tenta encher a "bag" (cluster) com pedidos próximos
+      // Itera sobre os outros pedidos para ver quem encaixa
+      for (const candidate of activeDeliveryOrders) {
+        // Se já foi processado ou cluster cheio, pula
+        if (processedIds.has(candidate._id)) continue
+        if (currentCluster.length >= maxOrdersPerCluster) break 
 
-        const distance = getDistance(
-          parseFloat(order.enderecoEntrega.latitude),
-          parseFloat(order.enderecoEntrega.longitude),
-          parseFloat(otherOrder.enderecoEntrega.latitude),
-          parseFloat(otherOrder.enderecoEntrega.longitude)
-        )
+        // Checagem de Tempo: O candidato chegou muito depois do pedido base?
+        const candidateTime = new Date(candidate.createdAt).getTime()
+        const timeDiffMinutes = (candidateTime - baseTime) / 60000
+        
+        if (timeDiffMinutes > maxTimeWindowMinutes) continue // Candidato muito novo para o grupo antigo
 
-        if (distance <= radiusKm) {
-          cluster.push(otherOrder)
-          visited.add(otherOrder._id)
+        // Checagem de Distância: O candidato está perto de ALGUÉM do grupo?
+        // (Isso permite uma rota "corrente": A perto de B, B perto de C)
+        const isNearCluster = currentCluster.some(clusterMember => {
+          const dist = getDistance(
+            parseFloat(clusterMember.enderecoEntrega.latitude),
+            parseFloat(clusterMember.enderecoEntrega.longitude),
+            parseFloat(candidate.enderecoEntrega.latitude),
+            parseFloat(candidate.enderecoEntrega.longitude)
+          )
+          return dist <= radiusKm
+        })
+
+        if (isNearCluster) {
+          currentCluster.push(candidate)
+          processedIds.add(candidate._id)
         }
-      })
+      }
 
-      if (cluster.length > 1) {
-        clusters.push(cluster)
+      // Só consideramos cluster se tiver mais de 1 pedido
+      if (currentCluster.length > 1) {
+        clusters.push(currentCluster)
       }
     })
 
-    // Mapeia pedidos com informação de cluster E COR
-    const orderMap = new Map()
-    pedidos.forEach(p => orderMap.set(p._id, { 
-      ...p, 
-      clusterId: null, 
-      clusterSize: 1, 
-      clusterColor: null,
-      clusterOrders: [],
-      clusterDistances: []
-    }))
+    // 4. Remontar a lista original enriquecida com dados do cluster
+    // Mapa rápido para acesso O(1)
+    const clusterMap = new Map()
+    
+    clusters.forEach((cluster, idx) => {
+      // ID único baseado no pedido mais antigo (Líder) + timestamp
+      const leaderId = cluster[0]._id.slice(-4)
+      const clusterId = `rota-${leaderId}-${idx}`
+      const color = getClusterColor(clusterId)
 
-    clusters.forEach((cluster, clusterIdx) => {
-      const clusterId = `cluster-${clusterIdx}`
-      const clusterColor = CLUSTER_COLORS[clusterIdx % CLUSTER_COLORS.length] // Cor única por grupo
-      
       cluster.forEach(order => {
-        // Calcula distâncias para outros pedidos do mesmo cluster
+        // Calcular distâncias relativas para UI
         const distances = cluster
           .filter(o => o._id !== order._id)
-          .map(otherOrder => {
-            const dist = getDistance(
+          .map(o => ({
+            orderId: o._id,
+            orderNumber: o._id.slice(-4).toUpperCase(),
+            address: `${o.enderecoEntrega.rua}, ${o.enderecoEntrega.numero}`,
+            distance: getDistance(
               parseFloat(order.enderecoEntrega.latitude),
               parseFloat(order.enderecoEntrega.longitude),
-              parseFloat(otherOrder.enderecoEntrega.latitude),
-              parseFloat(otherOrder.enderecoEntrega.longitude)
+              parseFloat(o.enderecoEntrega.latitude),
+              parseFloat(o.enderecoEntrega.longitude)
             )
-            return {
-              orderId: otherOrder._id,
-              orderNumber: otherOrder._id.slice(-4).toUpperCase(),
-              address: `${otherOrder.enderecoEntrega.rua}, ${otherOrder.enderecoEntrega.numero}`,
-              distance: dist
-            }
-          })
-          .sort((a, b) => a.distance - b.distance)
+          })).sort((a,b) => a.distance - b.distance)
 
-        orderMap.set(order._id, {
-          ...order,
+        clusterMap.set(order._id, {
           clusterId,
           clusterSize: cluster.length,
-          clusterColor,
-          clusterOrders: cluster.map(o => o._id),
+          clusterColor: color,
           clusterDistances: distances
         })
       })
     })
 
-    return Array.from(orderMap.values())
-  }, [pedidos, enabled, radiusKm])
+    // Retorna a lista original com os metadados injetados
+    return pedidos.map(p => {
+      const clusterData = clusterMap.get(p._id)
+      if (clusterData) {
+        return { ...p, ...clusterData }
+      }
+      return { ...p, clusterId: null, clusterSize: 1, clusterColor: null }
+    })
+
+  }, [pedidos, enabled, radiusKm, maxTimeWindowMinutes, maxOrdersPerCluster])
 }

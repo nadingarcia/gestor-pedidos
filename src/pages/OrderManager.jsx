@@ -176,6 +176,8 @@ export default function OrderManager() {
     agruparPorDistancia: localStorage.getItem('agruparPorDistancia') === 'true',
     raioCluster: parseFloat(localStorage.getItem('raioCluster')) || 2,
     enderecoRestaurante: localStorage.getItem('enderecoRestaurante') || 'Av. Paulista, 1578, São Paulo, SP',
+    tempoJanela: parseInt(localStorage.getItem('tempoJanela')) || 30, // Default 30 min
+    capacidadeEntrega: parseInt(localStorage.getItem('capacidadeEntrega')) || 4, // Default 4 pedidos
   })
 
   // --- Monitorar estado de tela cheia ---
@@ -369,8 +371,14 @@ export default function OrderManager() {
     pedidos.filter(p => ['Saiu para entrega', 'Entregue', 'Cancelado'].includes(p.status)), 
   [pedidos])
 
-  // Aplica o hook APENAS nos pedidos ativos
-  const clusteredActive = useOrderClustering(activeOrders, settings.agruparPorDistancia, settings.raioCluster)
+  // Hook atualizado com os novos parâmetros de inteligência
+  const clusteredActive = useOrderClustering(
+    activeOrders, 
+    settings.agruparPorDistancia, 
+    settings.raioCluster,
+    settings.tempoJanela,      // Novo: Janela de tempo
+    settings.capacidadeEntrega 
+  )
 
   // Recombina
   const pedidosComClusters = useMemo(() => 
@@ -1050,6 +1058,68 @@ export default function OrderManager() {
                       </div>
                     </div>
 
+                       {/* Controle 1: Capacidade da Bag */}
+                    <div className="p-4 rounded-lg bg-white border-2 border-blue-100">
+                      <div className="flex justify-between items-center mb-3">
+                        <div>
+                          <span className="text-sm font-bold text-gray-900 block flex items-center gap-2">
+                            <i className="fas fa-shopping-bag text-blue-500"></i>
+                            Capacidade da Entrega
+                          </span>
+                          <span className="text-[10px] text-gray-500">Quantos pedidos o motoboy leva?</span>
+                        </div>
+                        <span className="text-sm font-black text-blue-700 bg-blue-100 px-2 py-1 rounded border border-blue-200">
+                          {settings.capacidadeEntrega} un.
+                        </span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="2" 
+                        max="8" 
+                        step="1" 
+                        value={settings.capacidadeEntrega} 
+                        onChange={(e) => saveSettings({...settings, capacidadeEntrega: parseInt(e.target.value)})}
+                        className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
+                      />
+                      <div className="flex justify-between text-[10px] text-gray-400 mt-2 font-medium">
+                        <span>2 (Mínimo)</span>
+                        <span>8 (Mochila Cheia)</span>
+                      </div>
+                    </div>
+
+                    {/* Controle 2: Janela de Tempo */}
+                    <div className="p-4 rounded-lg bg-white border-2 border-blue-100">
+                      <div className="flex justify-between items-center mb-3">
+                        <div>
+                          <span className="text-sm font-bold text-gray-900 block flex items-center gap-2">
+                            <i className="fas fa-hourglass-half text-blue-500"></i>
+                            Janela de Agrupamento
+                          </span>
+                          <span className="text-[10px] text-gray-500">Espera máx. do 1º pedido</span>
+                        </div>
+                        <span className="text-sm font-black text-blue-700 bg-blue-100 px-2 py-1 rounded border border-blue-200">
+                          {settings.tempoJanela} min
+                        </span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="10" 
+                        max="60" 
+                        step="5" 
+                        value={settings.tempoJanela} 
+                        onChange={(e) => saveSettings({...settings, tempoJanela: parseInt(e.target.value)})}
+                        className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
+                      />
+                      <div className="flex justify-between text-[10px] text-gray-400 mt-2 font-medium">
+                        <span>10min (Rápido)</span>
+                        <span>60min (Econômico)</span>
+                      </div>
+                      <p className="mt-2 text-[10px] text-orange-600 bg-orange-50 p-2 rounded border border-orange-100">
+                        <i className="fas fa-exclamation-circle mr-1"></i>
+                        Pedidos antigos não esperarão mais que {settings.tempoJanela} min para sair, garantindo que a comida chegue quente.
+                      </p>
+                    </div>
+
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block">
                         Endereço do Restaurante
@@ -1091,6 +1161,7 @@ export default function OrderManager() {
                   </>
                 )}
               </div>
+
             </section>
 
             <div className="pt-6 border-t border-gray-200">
