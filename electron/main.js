@@ -1,10 +1,24 @@
-import { app, BrowserWindow, ipcMain, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, dialog } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import AutoLaunch from 'auto-launch'
 
+// 🔹 CORREÇÃO AQUI: Importação compatível com ESM
+import electronUpdater from 'electron-updater'
+const { autoUpdater } = electronUpdater
+
+import log from 'electron-log'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// 🔹 CONFIGURAÇÃO DE LOG E UPDATER
+log.transports.file.level = 'info'
+autoUpdater.logger = log
+
+// IMPORTANTE:
+autoUpdater.autoDownload = true 
+autoUpdater.autoInstallOnAppQuit = true
 
 // Corrige erro de GPU no Linux
 app.disableHardwareAcceleration()
@@ -35,19 +49,65 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
-    //mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
+    
+    // 🔹 VERIFICAÇÃO DE ATUALIZAÇÃO
+    if (!isDev) {
+      log.info('App pronto. Verificando atualizações...')
+      autoUpdater.checkForUpdatesAndNotify()
+    }
   })
 
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 }
+
+// 🔹 EVENTOS DO AUTO-UPDATER
+
+autoUpdater.on('checking-for-update', () => {
+  log.info('Verificando se há atualizações...')
+})
+
+autoUpdater.on('update-available', (info) => {
+  log.info('Atualização disponível:', info)
+  if (mainWindow) mainWindow.webContents.send('update_available')
+})
+
+autoUpdater.on('update-not-available', () => {
+  log.info('Nenhuma atualização disponível.')
+})
+
+autoUpdater.on('error', (err) => {
+  log.error('Erro na atualização:', err)
+})
+
+autoUpdater.on('download-progress', (progressObj) => {
+  let log_message = "Velocidade de download: " + progressObj.bytesPerSecond
+  log_message = log_message + ' - Baixado ' + progressObj.percent + '%'
+  log.info(log_message)
+})
+
+autoUpdater.on('update-downloaded', () => {
+  log.info('Atualização baixada.')
+  
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Atualização Disponível',
+    message: 'Uma nova versão do Gestor de Pedidos foi baixada. Deseja reiniciar e atualizar agora?',
+    buttons: ['Sim, Reiniciar', 'Depois']
+  }).then((returnValue) => {
+    if (returnValue.response === 0) {
+      autoUpdater.quitAndInstall(false, true)
+    }
+  })
+})
+
 
 // 🔹 Auto launch
 ipcMain.handle('set-auto-launch', async (event, enable) => {
@@ -76,12 +136,11 @@ ipcMain.handle('check-auto-launch', async () => {
 })
 
 // 🔹 Impressoras
-// main.js (trecho relevante)
 ipcMain.handle('get-printers', async () => {
   try {
     if (!mainWindow) return { success: false, printers: [], error: 'mainWindow não disponível' }
     const printers = await mainWindow.webContents.getPrintersAsync()
-    return { success: true, printers } // <-- formato consistente
+    return { success: true, printers }
   } catch (error) {
     console.error('Erro ao buscar impressoras:', error)
     return { success: false, printers: [], error: error.message }
