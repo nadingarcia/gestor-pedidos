@@ -43,6 +43,13 @@ const renderPedidoToHTML = (pedido) => {
   const nomeRestaurante = localStorage.getItem('nomeRestaurante') || 'Restaurante'
   const enderecoRestaurante = localStorage.getItem('enderecoRestaurante') || ''
 
+  const cnpjRestaurante = localStorage.getItem('cnpjRestaurante') || '';
+
+  // Formata se vier sem máscara (14 dígitos puros)
+  const cnpjFormatado = cnpjRestaurante.length === 14
+      ? cnpjRestaurante.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+      : cnpjRestaurante;
+
   const itensHtml = pedido.itens.map(item => {
     const totalItem = item.precoUnitario * item.quantidade
     const complementosHtml = item.complementos?.length
@@ -125,6 +132,7 @@ const renderPedidoToHTML = (pedido) => {
       <body>
         <div class="text-center">
           <div class="title">${nomeRestaurante}</div>
+          ${cnpjFormatado ? `<div class="restaurant-address">CNPJ ${cnpjFormatado}</div>` : ''}
           ${enderecoRestaurante ? `<div class="restaurant-address">${enderecoRestaurante}</div>` : ''}
           <div class="subtitle">
             ${formatDate(pedido.createdAt)} — ${formatTime(pedido.createdAt)}<br/>

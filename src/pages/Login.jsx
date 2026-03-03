@@ -139,6 +139,9 @@ export default function Login() {
         const enderecoFormatado = `${endereco.logradouro}, ${endereco.numero}, ${endereco.bairro}, ${endereco.cidade}, ${endereco.estado}`
         localStorage.setItem('enderecoRestaurante', enderecoFormatado)
       }
+      if(data.cnpj) {
+        localStorage.setItem('cnpjRestaurante', data.cnpj)
+      }
       if (data.nomeRestaurante) {
         localStorage.setItem('nomeRestaurante', data.nomeRestaurante)
       }
