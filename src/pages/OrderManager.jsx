@@ -167,6 +167,14 @@ export default function OrderManager() {
   const processedOrderIds = useRef(new Set())
   const navigate = useNavigate()
 
+  const clearAuthAndRedirect = () => {
+    ['nexfood_token', 'nexfood_user'
+    ].forEach(key => localStorage.removeItem(key))
+    sessionStorage.removeItem('nexfood_token')
+    sessionStorage.removeItem('nexfood_user')
+    navigate('/login')
+  }
+
   const [settings, setSettings] = useState({
     impressoraAutomatica: localStorage.getItem('impressoraAutomatica') || '',
     aceitarAutomatico: localStorage.getItem('aceitarAutomatico') !== 'false',
@@ -243,11 +251,12 @@ export default function OrderManager() {
 
   const apiUpdateStatus = async (id, status) => {
     const token = localStorage.getItem('nexfood_token')
-    await fetch(`https://nexfood.vercel.app/api/pedidos/${id}/status`, {
+    const res = await fetch(`https://nexfood.vercel.app/api/pedidos/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ status })
     })
+    if (res.status === 401 || res.status === 403) return clearAuthAndRedirect()
   }
 
   const fetchPedidos = useCallback(async () => {
@@ -259,7 +268,7 @@ export default function OrderManager() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       
-      if (res.status === 401) return navigate('/login')
+      if (res.status === 401 || res.status === 403) return clearAuthAndRedirect()
       const data = await res.json()
       
       const sorted = Array.isArray(data) ? data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : []

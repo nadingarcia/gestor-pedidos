@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import AutoLaunch from 'auto-launch'
@@ -11,6 +11,8 @@ import log from 'electron-log'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+Menu.setApplicationMenu(null)
 
 // 🔹 CONFIGURAÇÃO DE LOG E UPDATER
 log.transports.file.level = 'info'
