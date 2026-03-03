@@ -39,15 +39,17 @@ const fuzzyMatch = (text, query) => {
   return queryIndex === queryLower.length
 }
 
-// --- Gerador de Cupom Fiscal (80mm/58mm Otimizado) ---
 const renderPedidoToHTML = (pedido) => {
+  const nomeRestaurante = localStorage.getItem('nomeRestaurante') || 'Restaurante'
+  const enderecoRestaurante = localStorage.getItem('enderecoRestaurante') || ''
+
   const itensHtml = pedido.itens.map(item => {
     const totalItem = item.precoUnitario * item.quantidade
-    const complementosHtml = item.complementos?.length 
-      ? `<div class="complementos">+ ${item.complementos.join('<br/>+ ')}</div>` 
+    const complementosHtml = item.complementos?.length
+      ? `<div class="complementos">+ ${item.complementos.join('<br/>+ ')}</div>`
       : ''
-    const obsHtml = item.obs 
-      ? `<div class="obs"><strong>OBS:</strong> ${item.obs}</div>` 
+    const obsHtml = item.obs
+      ? `<div class="obs"><strong>OBS:</strong> ${item.obs}</div>`
       : ''
 
     return `
@@ -55,10 +57,10 @@ const renderPedidoToHTML = (pedido) => {
         <div class="item-header">
           <span class="qty">${item.quantidade}x</span>
           <span class="name">${item.nome}</span>
+          <span class="item-price">${formatCurrency(totalItem)}</span>
         </div>
         ${complementosHtml}
         ${obsHtml}
-        <div class="item-price">${formatCurrency(totalItem)}</div>
       </div>
     `
   }).join('')
@@ -69,54 +71,84 @@ const renderPedidoToHTML = (pedido) => {
       <head>
         <meta charset="utf-8">
         <style>
-          @page { margin: 0; padding: 0; }
-          body { font-family: 'Roboto', sans-serif; width: 300px; margin: 0; padding: 10px; color: #000; font-size: 12px; line-height: 1.3; }
+          @page { margin: 0; size: 72mm auto; }
+          html, body { height: auto !important; overflow: hidden; }
+          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
+          body {
+            font-family: 'Courier New', Courier, monospace;
+            width: 70mm;
+            margin: 0;
+            padding: 4px 6px 2px 6px;
+            color: #000;
+            font-size: 12px;
+            line-height: 1.5;
+            -webkit-font-smoothing: none;
+            display: inline-block;
+          }
           .text-center { text-align: center; }
-          .title { font-size: 16px; font-weight: 900; margin-bottom: 5px; text-transform: uppercase; }
-          .subtitle { font-size: 12px; margin-bottom: 10px; border-bottom: 2px dashed #000; padding-bottom: 10px; }
+          .title { font-size: 16px; font-weight: 900; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
+          .restaurant-address { font-size: 11px; font-weight: 700; color: #000; margin-bottom: 6px; }
+          .subtitle { font-size: 12px; font-weight: 800; color: #000; border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
           .info-group { margin-bottom: 8px; }
-          .info-label { font-size: 10px; text-transform: uppercase; font-weight: bold; }
-          .divider-bold { border-top: 2px solid #000; margin: 10px 0; }
-          .divider { border-top: 1px dashed #000; margin: 10px 0; }
+          .info-label { font-size: 11px; text-transform: uppercase; font-weight: 900; color: #000; border-bottom: 1px solid #000; margin-bottom: 3px; }
+          .info-value { font-size: 13px; font-weight: 800; color: #000; }
+          .info-sub { font-size: 12px; font-weight: 700; color: #000; }
+          .divider-bold { border-top: 2px solid #000; margin: 8px 0; }
+          .divider { border-top: 1px dashed #000; margin: 8px 0; }
+
           .item-row { margin-bottom: 8px; }
-          .item-header { display: flex; align-items: flex-start; }
-          .qty { font-weight: 900; margin-right: 5px; font-size: 14px; min-width: 20px; }
-          .name { font-weight: 700; flex: 1; font-size: 13px; }
-          .complementos { margin-left: 25px; font-size: 11px; color: #333; }
-          .obs { margin-left: 25px; margin-top: 2px; font-weight: bold; background: #eee; padding: 2px; display: inline-block; }
-          .item-price { text-align: right; font-weight: bold; }
-          .totals-row { display: flex; justify-between: space-between; margin-bottom: 2px; }
-          .total-big { font-size: 18px; font-weight: 900; margin-top: 5px; }
-          .payment-box { border: 2px solid #000; padding: 5px; margin-top: 10px; text-align: center; font-weight: bold; font-size: 14px; }
-          .footer { margin-top: 15px; text-align: center; font-size: 10px; }
+          .item-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+          }
+          .qty { font-weight: 900; margin-right: 5px; font-size: 13px; min-width: 22px; color: #000; }
+          .name { font-weight: 800; flex: 1; font-size: 12px; word-break: break-word; color: #000; }
+          .item-price {
+            font-weight: 900;
+            font-size: 12px;
+            color: #000;
+            text-align: right;
+            white-space: nowrap;
+            margin-left: 4px;
+            min-width: 52px;
+          }
+          .complementos { margin-left: 27px; font-size: 11px; font-weight: 800; color: #000; }
+          .obs { margin-left: 27px; margin-top: 3px; font-weight: 900; font-size: 11px; border-left: 3px solid #000; padding-left: 4px; color: #000; }
+
+          .totals-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 12px; font-weight: 800; color: #000; }
+          .total-big { font-size: 17px; font-weight: 900; margin-top: 5px; color: #000; }
+          .payment-box { border: 2px solid #000; padding: 5px; margin-top: 8px; text-align: center; font-weight: 900; font-size: 13px; color: #000; }
+          .footer { margin-top: 8px; margin-bottom: 0; text-align: center; font-size: 11px; font-weight: 800; color: #000; border-top: 2px dashed #000; padding-top: 6px; padding-bottom: 4px; }          .fiel { font-size: 11px; font-weight: 900; color: #000; margin-top: 2px; }
         </style>
       </head>
       <body>
         <div class="text-center">
-          <div class="title">NexFood Delivery</div>
+          <div class="title">${nomeRestaurante}</div>
+          ${enderecoRestaurante ? `<div class="restaurant-address">${enderecoRestaurante}</div>` : ''}
           <div class="subtitle">
-            ${formatDate(pedido.createdAt)} - ${formatTime(pedido.createdAt)}<br/>
+            ${formatDate(pedido.createdAt)} — ${formatTime(pedido.createdAt)}<br/>
             PEDIDO #${pedido._id.slice(-4).toUpperCase()}
           </div>
         </div>
 
         <div class="info-group">
           <div class="info-label">Cliente</div>
-          <div style="font-weight:bold; font-size: 13px;">${pedido.cliente?.nome || 'Consumidor'}</div> 
-          ${pedido.cliente?.telefone ? `<div>Tel: ${pedido.cliente.telefone}</div>` : ''}
-          ${pedido.cliente?.totalPedidos > 0 ? `<div style="font-size:10px; margin-top:2px;">★ Cliente fiel (${pedido.cliente.totalPedidos}º pedido)</div>` : ''}
+          <div class="info-value">${pedido.cliente?.nome || 'Consumidor'}</div>
+          ${pedido.cliente?.telefone ? `<div class="info-sub">Tel: ${pedido.cliente.telefone}</div>` : ''}
+          ${pedido.cliente?.totalPedidos > 0 ? `<div class="fiel">★ Cliente Fiel (${pedido.cliente.totalPedidos}º pedido)</div>` : ''}
         </div>
 
         ${pedido.tipo === 'Delivery' && pedido.enderecoEntrega ? `
           <div class="info-group">
             <div class="info-label">Entrega</div>
-            <div style="font-size: 13px; font-weight: bold;">
+            <div class="info-value">
               ${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}
             </div>
-            <div>${pedido.enderecoEntrega.bairro} - ${pedido.enderecoEntrega.cidade}</div>
-            ${pedido.enderecoEntrega.complemento ? `<div>Comp: ${pedido.enderecoEntrega.complemento}</div>` : ''}
+            <div class="info-sub">${pedido.enderecoEntrega.bairro} — ${pedido.enderecoEntrega.cidade}</div>
+            ${pedido.enderecoEntrega.complemento ? `<div class="info-sub">Comp: ${pedido.enderecoEntrega.complemento}</div>` : ''}
           </div>
-        ` : `<div class="payment-box">RETIRADA NO BALCÃO</div>`}
+        ` : `<div class="payment-box">★ RETIRADA NO BALCÃO ★</div>`}
 
         <div class="divider-bold"></div>
         ${itensHtml}
@@ -128,10 +160,14 @@ const renderPedidoToHTML = (pedido) => {
 
         <div class="divider"></div>
         <div class="info-label">Pagamento</div>
-        <div style="font-weight:bold; text-transform:uppercase;">${pedido.formaPagamento?.replace(/_/g, ' ')}</div>
-        ${pedido.trocoPara ? `<div>Troco para: ${formatCurrency(pedido.trocoPara)}</div>` : ''}
+        <div class="info-value">${pedido.formaPagamento?.replace(/_/g, ' ').toUpperCase()}</div>
+        ${pedido.trocoPara ? `<div class="info-sub">Troco para: ${formatCurrency(pedido.trocoPara)}</div>` : ''}
 
-        <div class="footer">NEXFOOD - Tecnologia para Delivery<br/>NEX07 • CNPJ 63.805.056/0001-33</div>
+        <div class="footer">
+          ${nomeRestaurante} • Obrigado pela preferência!
+          NEXFOOD - Tecnologia para Delivery
+          NEX07 • CNPJ 63.805.056/0001-33
+        </div>
       </body>
     </html>
   `
@@ -237,17 +273,43 @@ export default function OrderManager() {
     }
   }
 
-  const handlePrint = async (pedido) => {
-    const html = renderPedidoToHTML(pedido)
-    if (electronAPI?.isElectron?.() && settings.impressoraAutomatica) {
-      await electronAPI.printOrder(settings.impressoraAutomatica, html)
-    } else {
-      const w = window.open('', '_blank', 'width=350,height=600')
-      w.document.write(html)
-      w.document.close()
-      setTimeout(() => w.print(), 500)
-    }
+ const handlePrint = async (pedido) => {
+  const html = renderPedidoToHTML(pedido)
+
+  if (electronAPI?.isElectron?.() && settings.impressoraAutomatica) {
+    await electronAPI.printOrder(settings.impressoraAutomatica, html)
+    return
   }
+
+  // Navegador: aguarda o load completo antes de imprimir
+  const w = window.open('', '_blank', 'width=380,height=700')
+  if (!w) {
+    alert('Pop-up bloqueado! Permita pop-ups para este site.')
+    return
+  }
+
+  w.document.open()
+  w.document.write(html)
+  w.document.close()
+
+  // Usa onload em vez de setTimeout para garantir que o conteúdo carregou
+  w.onload = () => {
+    setTimeout(() => {
+      w.focus()
+      w.print()
+      // Fecha após imprimir (opcional)
+      w.onafterprint = () => w.close()
+    }, 200)
+  }
+
+  // Fallback caso onload não dispare (alguns browsers)
+  setTimeout(() => {
+    if (!w.closed) {
+      w.focus()
+      w.print()
+    }
+  }, 1500)
+}
 
   const apiUpdateStatus = async (id, status) => {
     const token = localStorage.getItem('nexfood_token')

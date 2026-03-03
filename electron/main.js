@@ -156,27 +156,53 @@ ipcMain.handle('print-order', async (event, { printerName, html }) => {
     const win = new BrowserWindow({
       show: false,
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
+        nodeIntegration: false,
+        contextIsolation: true,
       },
     })
 
-    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    // Escreve em arquivo temporário (evita limite do data: URL)
+    const os = await import('os')
+    const fs = await import('fs')
+    const tmpPath = path.join(os.default.tmpdir(), `nexfood_print_${Date.now()}.html`)
+    fs.default.writeFileSync(tmpPath, html, 'utf-8')
 
-    const options = {
-      silent: true,
-      printBackground: true,
-      deviceName: printerName || undefined,
-    }
+    await win.loadFile(tmpPath)
 
-    win.webContents.print(options, (success, failureReason) => {
-      if (!success) console.error('Erro na impressão:', failureReason)
-      win.close()
+    // Aguarda renderização completa antes de imprimir
+    await new Promise(resolve => setTimeout(resolve, 500))
+
+    return await new Promise((resolve) => {
+      win.webContents.print(
+        {
+          silent: true,
+          printBackground: true,
+          deviceName: printerName || undefined,
+          margins: { marginType: 'none' },
+          pageSize: {
+            width: 72000,  // 72mm em micrômetros
+            height: 297000 // altura grande, a impressora corta automaticamente
+          },
+          // Garante que não vai escalar/encolher o conteúdo
+          scaleFactor: 100,
+        },
+        (success, failureReason) => {
+          // Limpa arquivo temp
+          try { fs.default.unlinkSync(tmpPath) } catch {}
+          win.destroy()
+
+          if (!success) {
+            log.error('Erro na impressão:', failureReason)
+            resolve({ success: false, error: failureReason })
+          } else {
+            resolve({ success: true })
+          }
+        }
+      )
     })
 
-    return { success: true, message: 'Impressão iniciada' }
   } catch (error) {
-    console.error('Erro ao imprimir:', error)
+    log.error('Erro ao imprimir:', error)
     return { success: false, error: error.message }
   }
 })

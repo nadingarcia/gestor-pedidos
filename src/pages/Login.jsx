@@ -113,11 +113,37 @@ export default function Login() {
         )
       }
 
+            // DEPOIS
+      const { assinatura, endereco } = data
+
+      // ✅ Verifica assinatura antes de deixar entrar
+      const statusBloqueado = ['cancelado', 'atrasado'].includes(assinatura?.status)
+      const trialExpirado = assinatura?.status === 'trial' && 
+        assinatura?.dataFimTrial && 
+        new Date(assinatura.dataFimTrial) < new Date()
+
+      if (statusBloqueado || trialExpirado) {
+        setState({
+          loading: false,
+          success: false,
+          error: '__BLOCKED__' // flag especial, tratada no render
+        })
+        return
+      }
+
+      // ✅ Salva credenciais
       storage.set('nexfood_user', data, remember)
       if (data.token) storage.set('nexfood_token', data.token, remember)
 
-      setState({ loading: false, success: true, error: '' })
+      if (endereco?.logradouro) {
+        const enderecoFormatado = `${endereco.logradouro}, ${endereco.numero}, ${endereco.bairro}, ${endereco.cidade}, ${endereco.estado}`
+        localStorage.setItem('enderecoRestaurante', enderecoFormatado)
+      }
+      if (data.nomeRestaurante) {
+        localStorage.setItem('nomeRestaurante', data.nomeRestaurante)
+      }
 
+      setState({ loading: false, success: true, error: '' })
       setTimeout(() => navigate('/pedidos'), 1200)
 
     } catch (err) {
@@ -231,18 +257,56 @@ export default function Login() {
 
             <form onSubmit={handleSubmit} noValidate>
               
-              {/* Mensagem de Erro */}
-              {state.error && (
-                <div 
+              {/* DEPOIS — erro normal + tela de bloqueio */}
+              {state.error === '__BLOCKED__' ? (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
+                      <i className="fas fa-lock text-red-500 text-3xl"></i>
+                    </div>
+                    <h2 className="text-xl font-bold text-gray-900 mb-2">Acesso Suspenso</h2>
+                    <p className="text-gray-500 text-sm mb-6 leading-relaxed">
+                      Sua assinatura não está ativa. Regularize pelo sistema ou fale com o suporte.
+                    </p>
+                    <div className="space-y-3">
+                      <a
+                        href="https://nexfood.vercel.app"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-3 bg-[#7f22fe] hover:bg-[#6b1de0] text-white font-bold rounded-lg flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <i className="fas fa-globe"></i>
+                        Acessar Sistema NexFood
+                      </a>
+                      <a
+                        href="https://wa.me/5511968337522?text=Olá, minha conta NexFood está suspensa e preciso de ajuda."
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <i className="fab fa-whatsapp text-xl"></i>
+                        Falar com Suporte
+                      </a>
+                      <button
+                        onClick={() => setState({ loading: false, success: false, error: '' })}
+                        className="w-full py-2 text-sm text-gray-500 hover:text-gray-700"
+                      >
+                        Voltar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : state.error ? (
+                <div
                   id={errorId}
-                  role="alert" 
+                  role="alert"
                   aria-live="assertive"
                   className="flex items-start gap-3 p-4 mb-6 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm animate-fadeIn"
                 >
                   <i className="fas fa-exclamation-circle text-red-500 text-lg flex-shrink-0 mt-0.5"></i>
                   <span className="font-medium">{state.error}</span>
                 </div>
-              )}
+              ) : null}
 
               {/* Mensagem de Sucesso */}
               {state.success && (
