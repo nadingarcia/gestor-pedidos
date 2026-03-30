@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import electronAPI from '@utils/electronBridge'
 import { useOrderClustering } from '@hooks/useOrderClustering'
 import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
+import { notifyOrderStatus }  from '@utils/nexBotNotify'
+import { useNexBotStatus }    from '@hooks/useNexBotStatus'
 
 // --- Utilitários de Formatação ---
 const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0)
@@ -17,6 +19,9 @@ const formatDate = (dateStr) => {
   if (!dateStr) return ''
   return new Date(dateStr).toLocaleDateString('pt-BR')
 }
+
+const getOrderNumber = (pedido) =>
+  pedido?.numeroPedido || pedido?._id?.slice(-4).toUpperCase() || '----'
 
 // Tempo decorrido desde criação
 const getTimeElapsed = (dateStr) => {
@@ -136,7 +141,7 @@ const renderPedidoToHTML = (pedido) => {
           ${enderecoRestaurante ? `<div class="restaurant-address">${enderecoRestaurante}</div>` : ''}
           <div class="subtitle">
             ${formatDate(pedido.createdAt)} — ${formatTime(pedido.createdAt)}<br/>
-            PEDIDO #${pedido._id.slice(-4).toUpperCase()}
+            PEDIDO #${getOrderNumber(pedido)}
           </div>
         </div>
 
@@ -210,6 +215,7 @@ export default function OrderManager() {
   
   const processedOrderIds = useRef(new Set())
   const navigate = useNavigate()
+  const nexBotStatus = useNexBotStatus()
 
   const clearAuthAndRedirect = () => {
     ['nexfood_token', 'nexfood_user'
@@ -415,7 +421,11 @@ export default function OrderManager() {
     setLoadingOrderId(pedido._id)
 
     try {
-      await apiUpdateStatus(pedido._id, nextStatus)
+    await apiUpdateStatus(pedido._id, nextStatus)
+
+      // Notificação WhatsApp via NexBot (fire-and-forget, não bloqueia)
+      notifyOrderStatus(pedido, nextStatus)
+
       if (nextStatus === 'Em preparação' && settings.impressoraAutomatica) {
         handlePrint(pedido)
       }
@@ -684,6 +694,8 @@ export default function OrderManager() {
               <span className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">Faturamento (Entregues)</span>
               <span className="text-xl font-bold text-emerald-600">{formatCurrency(totalDia)}</span>
             </div>
+
+            <NexBotBadge status={nexBotStatus} />
             
             <button 
               onClick={() => setShowFilters(!showFilters)}
@@ -1514,7 +1526,7 @@ function OrderCard({
       <div className="flex justify-between items-start mb-3">
         <div className="flex items-center gap-2 flex-1">
           <span className="text-xs font-black text-gray-900">
-            #{highlightText(pedido._id.slice(-4).toUpperCase())}
+            #{highlightText(getOrderNumber(pedido))}
           </span>
           <span className="text-[10px] text-gray-500">{formatTime(pedido.createdAt)}</span>
         </div>
@@ -1624,7 +1636,7 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading, pedidos, o
     if (!currentPedido.cliente?.telefone) return
     const phone = currentPedido.cliente.telefone.replace(/\D/g, '')
     const fullPhone = phone.length <= 11 ? `55${phone}` : phone
-    const msg = `Olá ${currentPedido.cliente.nome}, tudo bem? Aqui é do NexFood. Estamos entrando em contato sobre seu pedido #${currentPedido._id.slice(-4).toUpperCase()}.`
+    const msg = `Olá ${currentPedido.cliente.nome}, tudo bem? Aqui é do NexFood. Estamos entrando em contato sobre seu pedido #${getOrderNumber(currentPedido)}.`
     window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, '_blank')
   }
 
@@ -1717,7 +1729,7 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading, pedidos, o
               </div>
               <div>
                 <h2 className="text-xl font-bold text-gray-900 flex items-center gap-3">
-                  Pedido #{currentPedido._id.slice(-4).toUpperCase()}
+                  Pedido #{getOrderNumber(currentPedido)}
                   {minutes > 0 && <span className="text-sm font-normal text-gray-600">({minutes}min)</span>}
                 </h2>
                 <span className="text-xs px-3 py-1 rounded-full bg-purple-100 text-[#7f22fe] font-medium">
@@ -1926,6 +1938,23 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading, pedidos, o
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function NexBotBadge({ status }) {
+  const config = {
+    online:   { dot: 'bg-emerald-500', text: 'WhatsApp Ativo',     ring: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+    offline:  { dot: 'bg-gray-400',   text: 'WhatsApp Offline',   ring: 'border-gray-200 bg-gray-50 text-gray-500' },
+    checking: { dot: 'bg-yellow-400 animate-pulse', text: 'Verificando...', ring: 'border-yellow-200 bg-yellow-50 text-yellow-600' },
+  }
+  const c = config[status] ?? config.checking
+
+  return (
+    <div className={`hidden md:flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold ${c.ring}`}>
+      <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+      <i className="fab fa-whatsapp" />
+      {c.text}
     </div>
   )
 }
