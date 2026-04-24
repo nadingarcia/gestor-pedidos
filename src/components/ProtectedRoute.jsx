@@ -4,19 +4,19 @@ import { Navigate } from 'react-router-dom'
 export default function ProtectedRoute({ children }) {
   if (typeof window === 'undefined') return null
 
-  // 1. Verifica token no LocalStorage (Login persistente)
-  const localToken = localStorage.getItem('nexfood_token')
-  const localUserToken = JSON.parse(localStorage.getItem('nexfood_user') || 'null')?.token
+  // Verifica se existe o token principal OU o refresh token (em qualquer storage)
+  const hasToken = localStorage.getItem('nexfood_token') || sessionStorage.getItem('nexfood_token')
+  const hasRefreshToken = localStorage.getItem('nexfood_refresh_token') || sessionStorage.getItem('nexfood_refresh_token')
 
-  // 2. Verifica token no SessionStorage (Login temporário - O QUE FALTAVA)
-  const sessionToken = sessionStorage.getItem('nexfood_token')
-  const sessionUserToken = JSON.parse(sessionStorage.getItem('nexfood_user') || 'null')?.token
+  // Se o usuário não tiver NENHUM dos dois, aí sim ele é deslogado
+  if (!hasToken && !hasRefreshToken) {
+    // Nota: coloquei "/login", se a sua rota de login for "/", basta alterar
+    return <Navigate to="/login" replace /> 
+  }
 
-  // Se encontrar em QUALQUER um dos lugares, libera o acesso
-  const token = localToken || localUserToken || sessionToken || sessionUserToken
-
-  // Se não tiver token nenhum, manda para o login
-  if (!token) return <Navigate to="/" replace />
-
+  // Se tiver algum token, deixa a tela abrir. 
+  // O seu novo 'apiFetch' fará o trabalho pesado: se o token estiver vencido, 
+  // ele usa o refresh token de forma invisível. Se o refresh falhar, 
+  // o próprio apiFetch redireciona o usuário para o login.
   return children
 }

@@ -5,6 +5,7 @@ import { useOrderClustering } from '@hooks/useOrderClustering'
 import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
 import { notifyOrderStatus }  from '@utils/nexBotNotify'
 import { useNexBotStatus }    from '@hooks/useNexBotStatus'
+import { apiFetch } from '../utils/apiFetch'
 
 // --- Utilitários de Formatação ---
 const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0)
@@ -218,10 +219,10 @@ export default function OrderManager() {
   const nexBotStatus = useNexBotStatus()
 
   const clearAuthAndRedirect = () => {
-    ['nexfood_token', 'nexfood_user'
-    ].forEach(key => localStorage.removeItem(key))
+    ['nexfood_token', 'nexfood_user', 'nexfood_refresh_token'].forEach(key => localStorage.removeItem(key))
     sessionStorage.removeItem('nexfood_token')
     sessionStorage.removeItem('nexfood_user')
+    sessionStorage.removeItem('nexfood_refresh_token')
     navigate('/login')
   }
 
@@ -326,25 +327,21 @@ export default function OrderManager() {
 }
 
   const apiUpdateStatus = async (id, status) => {
-    const token = localStorage.getItem('nexfood_token')
-    const res = await fetch(`https://nexfood.vercel.app/api/pedidos/${id}/status`, {
+    // Usando o novo apiFetch (ele já lida com o token e o Content-Type)
+    await apiFetch(`https://nexfood.vercel.app/api/pedidos/${id}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ status })
     })
-    if (res.status === 401 || res.status === 403) return clearAuthAndRedirect()
   }
 
   const fetchPedidos = useCallback(async () => {
     try {
-      const token = localStorage.getItem('nexfood_token') || sessionStorage.getItem('nexfood_token')
-      if (!token) return navigate('/login')
-
-      const res = await fetch('https://nexfood.vercel.app/api/pedidos/dia', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
+      // O apiFetch já cuida de verificar o token, fazer o refresh ou redirecionar
+      const res = await apiFetch('https://nexfood.vercel.app/api/pedidos/dia')
       
-      if (res.status === 401 || res.status === 403) return clearAuthAndRedirect()
+      // Se não for OK (ex: 401 que não conseguiu renovar e redirecionou), a gente para aqui
+      if (!res.ok) return 
+      
       const data = await res.json()
       
       const sorted = Array.isArray(data) ? data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : []
@@ -421,10 +418,10 @@ export default function OrderManager() {
     setLoadingOrderId(pedido._id)
 
     try {
-    await apiUpdateStatus(pedido._id, nextStatus)
+      await apiUpdateStatus(pedido._id, nextStatus)
 
-      // Notificação WhatsApp via NexBot (fire-and-forget, não bloqueia)
-      notifyOrderStatus(pedido, nextStatus)
+      // Notificação WhatsApp via NexBot (agora passando o status da conexão!)
+      notifyOrderStatus(pedido, nextStatus, nexBotStatus) // <-- Adicione o nexBotStatus aqui
 
       if (nextStatus === 'Em preparação' && settings.impressoraAutomatica) {
         handlePrint(pedido)
@@ -1285,7 +1282,9 @@ export default function OrderManager() {
                 onClick={() => { 
                   localStorage.removeItem('nexfood_token')
                   localStorage.removeItem('nexfood_user')
+                  localStorage.removeItem('nexfood_refresh_token')
                   sessionStorage.removeItem('nexfood_token')
+                  sessionStorage.removeItem('nexfood_refresh_token')
                   sessionStorage.removeItem('nexfood_user')
                   navigate('/login') 
                 }} 

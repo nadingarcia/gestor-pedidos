@@ -3,6 +3,7 @@
 // Projetado para o funcionário saber se as notificações estão ativas.
 
 import { useState, useEffect } from 'react'
+import { apiFetch } from '@utils/apiFetch' // <-- Importe o seu novo apiFetch
 
 const BOT_URL      = "https://lizanimiranda.com.br"
 const POLL_INTERVAL = 30_000  // 30s — suficiente para feedback visual
@@ -14,21 +15,26 @@ export function useNexBotStatus() {
   const [status, setStatus] = useState('checking')
 
   useEffect(() => {
-    const token = localStorage.getItem('nexfood_token')
-                || localStorage.getItem('authToken')
-    if (!token) { setStatus('offline'); return }
+    // Verificação rápida só para evitar requisição inútil se não houver NENHUM token
+    const hasToken = localStorage.getItem('nexfood_token') 
+                  || sessionStorage.getItem('nexfood_token')
+                  || localStorage.getItem('nexfood_refresh_token')
+                  || sessionStorage.getItem('nexfood_refresh_token');
+
+    if (!hasToken) { setStatus('offline'); return }
 
     let cancelled = false
 
     const check = async () => {
       try {
-        const r = await fetch(`${BOT_URL}/restaurant/status`, {
+        // Usando o novo apiFetch, ele injeta o Bearer token e faz o refresh se necessário
+        const r = await apiFetch(`${BOT_URL}/restaurant/status`, {
           headers: {
-            'Authorization':              `Bearer ${token}`,
             'ngrok-skip-browser-warning': 'true',
           },
           signal: AbortSignal.timeout(5000),  // não trava a UI
         })
+        
         if (cancelled) return
         if (!r.ok) { setStatus('offline'); return }
 
