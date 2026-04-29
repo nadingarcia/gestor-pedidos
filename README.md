@@ -112,7 +112,7 @@ nexfood-gestor/
 Crie um arquivo `.env` na raiz do projeto:
 
 ```env
-VITE_API_URL=https://nexfood.vercel.app/api
+VITE_API_URL=https://painel.nexfood.app/api
 ```
 
 ### Impressoras

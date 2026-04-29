@@ -1,7 +1,7 @@
 import { useState, useCallback, useId, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const API_URL = 'https://nexfood.vercel.app/api/login'
+const API_URL = 'https://painel.nexfood.app/api/login'
 
 // ============================================================================
 // UTILITIES
@@ -274,7 +274,7 @@ export default function Login() {
                     </p>
                     <div className="space-y-3">
                       <a
-                        href="https://nexfood.vercel.app"
+                        href="https://painel.nexfood.app"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="w-full py-3 bg-[#7f22fe] hover:bg-[#6b1de0] text-white font-bold rounded-lg flex items-center justify-center gap-2 transition-colors"

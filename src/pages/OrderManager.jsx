@@ -274,7 +274,7 @@ export default function OrderManager() {
 
   const playNotificationSound = () => {
     if (!settings.somNotificacao) return
-    const audio = new Audio('https://nexfood.vercel.app/sounds/notification.mp3')
+    const audio = new Audio('https://painel.nexfood.app/sounds/notification.mp3')
     audio.play().catch(e => console.error('Erro áudio:', e))
   }
 
@@ -328,7 +328,7 @@ export default function OrderManager() {
 
   const apiUpdateStatus = async (id, status) => {
     // Usando o novo apiFetch (ele já lida com o token e o Content-Type)
-    await apiFetch(`https://nexfood.vercel.app/api/pedidos/${id}/status`, {
+    await apiFetch(`https://painel.nexfood.app/api/pedidos/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status })
     })
@@ -337,8 +337,8 @@ export default function OrderManager() {
   const fetchPedidos = useCallback(async () => {
     try {
       // O apiFetch já cuida de verificar o token, fazer o refresh ou redirecionar
-      const res = await apiFetch('https://nexfood.vercel.app/api/pedidos/dia')
-      
+      const res = await apiFetch('https://painel.nexfood.app/api/pedidos/dia')
+
       // Se não for OK (ex: 401 que não conseguiu renovar e redirecionou), a gente para aqui
       if (!res.ok) return 
       

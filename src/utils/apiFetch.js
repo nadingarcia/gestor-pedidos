@@ -12,7 +12,7 @@ async function tryRefreshToken() {
                               || sessionStorage.getItem(STORAGE_REFRESH_TOKEN);
             if (!refreshToken) return null;
 
-            const res = await fetch('https://nexfood.vercel.app/api/refresh-token', {
+            const res = await fetch('https://painel.nexfood.app/api/refresh-token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ refreshToken }),
