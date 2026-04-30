@@ -407,7 +407,7 @@ export default function OrderManager() {
     return () => clearInterval(interval)
   }, [fetchPedidos, settings.tempoRefresh])
 
-  const advanceStatus = async (pedido) => {
+const advanceStatus = async (pedido) => {
     let nextStatus = ''
     if (pedido.status === 'Recebido') nextStatus = 'Em preparação'
     else if (pedido.status === 'Em preparação') nextStatus = 'Saiu para entrega'
@@ -418,21 +418,47 @@ export default function OrderManager() {
     setLoadingOrderId(pedido._id)
 
     try {
-      await apiUpdateStatus(pedido._id, nextStatus)
+        await apiUpdateStatus(pedido._id, nextStatus)
+        notifyOrderStatus(pedido, nextStatus, nexBotStatus)
 
-      // Notificação WhatsApp via NexBot (agora passando o status da conexão!)
-      notifyOrderStatus(pedido, nextStatus, nexBotStatus) // <-- Adicione o nexBotStatus aqui
+        if (nextStatus === 'Em preparação') {
+            if (settings.impressoraAutomatica) {
+                handlePrint(pedido)
+            }
 
-      if (nextStatus === 'Em preparação' && settings.impressoraAutomatica) {
-        handlePrint(pedido)
-      }
-      await fetchPedidos()
+            if (pedido.tipo === 'Delivery') {
+                const userData = JSON.parse(
+                    localStorage.getItem('nexfood_integracoes') || 
+                    sessionStorage.getItem('nexfood_integracoes') || '{}'
+                )
+                const boxAtivo = userData?.boxDelivery?.ativo
+                console.log('Box Delivery ativo?', boxAtivo)
+
+                if (boxAtivo) {
+                    try {
+                        const boxRes = await apiFetch(
+                            `http://localhost:3000/api/pedidos/${pedido._id}/box-delivery`,
+                            { method: 'POST' }
+                        )
+                        if (boxRes.ok) {
+                            console.log('✅ Box Delivery: motoboy chamado')
+                        } else {
+                            console.warn('⚠️ Box Delivery: falha', await boxRes.json())
+                        }
+                    } catch (boxErr) {
+                        console.error('❌ Box Delivery erro:', boxErr)
+                    }
+                }
+            }
+        }
+
+        await fetchPedidos()
     } catch (err) {
-      console.error('Erro ao avançar status', err)
+        console.error('Erro ao avançar status', err)
     } finally {
-      setLoadingOrderId(null)
+        setLoadingOrderId(null)
     }
-  }
+}
 
   const handleToggleNotification = () => {
     const newState = !settings.notificacoesPush

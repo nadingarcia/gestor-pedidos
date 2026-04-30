@@ -1,7 +1,7 @@
 import { useState, useCallback, useId, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const API_URL = 'https://painel.nexfood.app/api/login'
+const API_URL = 'http://localhost:3000/api/login'
 
 // ============================================================================
 // UTILITIES
@@ -135,6 +135,10 @@ export default function Login() {
       storage.set('nexfood_user', data, remember)
       if (data.token) storage.set('nexfood_token', data.token, remember)
       if (data.refreshToken) storage.set('nexfood_refresh_token', data.refreshToken, remember)
+
+        console.log('Dados de integrações recebidos no login:', data.integracoes)
+
+      if (data.integracoes) storage.set('nexfood_integracoes', data.integracoes, remember)
 
       if (endereco?.logradouro) {
         const enderecoFormatado = `${endereco.logradouro}, ${endereco.numero}, ${endereco.bairro}, ${endereco.cidade}, ${endereco.estado}`
