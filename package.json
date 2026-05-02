@@ -1,6 +1,6 @@
 {
   "name": "nexfood-gestor-pedidos",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Sistema de gestão de pedidos para restaurantes",
   "main": "electron/main.js",
   "type": "module",

@@ -1,7 +1,7 @@
 import { useState, useCallback, useId, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const API_URL = 'http://localhost:3000/api/login'
+const API_URL = 'https://painel.nexfood.app/api/login'
 
 // ============================================================================
 // UTILITIES

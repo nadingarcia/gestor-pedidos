@@ -58,6 +58,7 @@ const renderPedidoToHTML = (pedido) => {
 
   const itensHtml = pedido.itens.map(item => {
     const totalItem = item.precoUnitario * item.quantidade
+    const nomeItem = item.nome.replace(/\s*\(padrão\)/gi, '').trim()
     const complementosHtml = item.complementos?.length
       ? `<div class="complementos">+ ${item.complementos.join('<br/>+ ')}</div>`
       : ''
@@ -69,7 +70,7 @@ const renderPedidoToHTML = (pedido) => {
       <div class="item-row">
         <div class="item-header">
           <span class="qty">${item.quantidade}x</span>
-          <span class="name">${item.nome}</span>
+          <span class="name">${nomeItem}</span>
           <span class="item-price">${formatCurrency(totalItem)}</span>
         </div>
         ${complementosHtml}
@@ -213,6 +214,24 @@ export default function OrderManager() {
     apenasRecorrentes: false,
   })
   const [showFilters, setShowFilters] = useState(false)
+
+  const [toasts, setToasts] = useState([])
+
+  const addToast = useCallback((message, type = 'info', duration = 6000) => {
+    const id = Date.now()
+    setToasts(prev => [...prev, { id, message, type }])
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration)
+  }, [])
+
+  const boxDeliveryAtivo = useMemo(() => {
+    try {
+      const data = JSON.parse(
+        localStorage.getItem('nexfood_integracoes') ||
+        sessionStorage.getItem('nexfood_integracoes') || '{}'
+      )
+      return data?.boxDelivery?.ativo === true
+    } catch { return false }
+  }, [])
   
   const processedOrderIds = useRef(new Set())
   const navigate = useNavigate()
@@ -235,8 +254,9 @@ export default function OrderManager() {
     agruparPorDistancia: localStorage.getItem('agruparPorDistancia') === 'true',
     raioCluster: parseFloat(localStorage.getItem('raioCluster')) || 2,
     enderecoRestaurante: localStorage.getItem('enderecoRestaurante') || 'Av. Paulista, 1578, São Paulo, SP',
-    tempoJanela: parseInt(localStorage.getItem('tempoJanela')) || 30, // Default 30 min
-    capacidadeEntrega: parseInt(localStorage.getItem('capacidadeEntrega')) || 4, // Default 4 pedidos
+    tempoJanela: parseInt(localStorage.getItem('tempoJanela')) || 30,
+    capacidadeEntrega: parseInt(localStorage.getItem('capacidadeEntrega')) || 4,
+    chamarEntregadorAuto: localStorage.getItem('chamarEntregadorAuto') !== 'false',
   })
 
   // --- Monitorar estado de tela cheia ---
@@ -326,6 +346,50 @@ export default function OrderManager() {
   }, 1500)
 }
 
+const callBoxDelivery = useCallback(async (pedido) => {
+    if (!boxDeliveryAtivo || !settings.chamarEntregadorAuto) return
+    if (pedido.tipo !== 'Delivery') return
+
+    try {
+      const boxRes = await apiFetch(
+        `https://painel.nexfood.app/api/pedidos/${pedido._id}/box-delivery`,
+        { method: 'POST' }
+      )
+
+      if (boxRes.ok) {
+        const data = await boxRes.json()
+        addToast(
+          `🛵 Entregador chamado! Ref: ${data.boxDelivery?.uuid?.slice(0, 8)}...`,
+          'success'
+        )
+      } else {
+        let errData = {}
+        try { errData = await boxRes.json() } catch {}
+
+        const isBalanceError = 
+          errData?.code === 'BALANCE_ERROR' ||
+          boxRes.status === 400
+
+        if (isBalanceError) {
+          addToast(
+            '⚠️ Saldo insuficiente na Box Delivery. Recarregue o saldo e entre em contato com a transportadora.',
+            'error',
+            14000
+          )
+        } else {
+          addToast(
+            `⚠️ Box Delivery: ${errData.message || 'Falha ao chamar entregador'} (cód: ${errData.code || boxRes.status})`,
+            'warning',
+            10000
+          )
+        }
+      }
+    } catch (boxErr) {
+      console.error('❌ Box Delivery erro:', boxErr)
+      addToast('❌ Erro ao conectar com a transportadora.', 'error')
+    }
+  }, [boxDeliveryAtivo, settings.chamarEntregadorAuto, addToast])
+
   const apiUpdateStatus = async (id, status) => {
     // Usando o novo apiFetch (ele já lida com o token e o Content-Type)
     await apiFetch(`https://painel.nexfood.app/api/pedidos/${id}/status`, {
@@ -344,8 +408,7 @@ export default function OrderManager() {
       
       const data = await res.json()
       
-      const sorted = Array.isArray(data) ? data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : []
-      
+      const sorted = Array.isArray(data) ? data.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)) : []      
       const pedidosConfirmados = []
       const aguardandoPagamento = []
       const pagamentosRecusados = []
@@ -381,8 +444,9 @@ export default function OrderManager() {
           
           await apiUpdateStatus(pedido._id, 'Em preparação')
           if (settings.impressoraAutomatica) handlePrint(pedido)
+          await callBoxDelivery(pedido)
           
-          pedido.status = 'Em preparação' 
+          pedido.status = 'Em preparação'
         }
       } else {
         const novosPendentes = pedidosConfirmados.filter(p => p.status === 'Recebido' && !processedOrderIds.current.has(p._id))
@@ -427,28 +491,9 @@ const advanceStatus = async (pedido) => {
             }
 
             if (pedido.tipo === 'Delivery') {
-                const userData = JSON.parse(
-                    localStorage.getItem('nexfood_integracoes') || 
-                    sessionStorage.getItem('nexfood_integracoes') || '{}'
-                )
-                const boxAtivo = userData?.boxDelivery?.ativo
-                console.log('Box Delivery ativo?', boxAtivo)
 
-                if (boxAtivo) {
-                    try {
-                        const boxRes = await apiFetch(
-                            `http://localhost:3000/api/pedidos/${pedido._id}/box-delivery`,
-                            { method: 'POST' }
-                        )
-                        if (boxRes.ok) {
-                            console.log('✅ Box Delivery: motoboy chamado')
-                        } else {
-                            console.warn('⚠️ Box Delivery: falha', await boxRes.json())
-                        }
-                    } catch (boxErr) {
-                        console.error('❌ Box Delivery erro:', boxErr)
-                    }
-                }
+                await callBoxDelivery(pedido)
+
             }
         }
 
@@ -1127,6 +1172,24 @@ const advanceStatus = async (pedido) => {
               </h3>
               
               <div className="space-y-4">
+                {boxDeliveryAtivo && (
+                  <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-emerald-200 hover:border-emerald-300 transition-colors">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <i className="fas fa-motorcycle text-emerald-600 text-sm"></i>
+                        <span className="text-sm text-gray-900 font-bold">Chamar Entregador Automático</span>
+                      </div>
+                      <p className="text-[10px] text-gray-600 leading-relaxed">
+                        Aciona a Box Delivery ao aceitar pedidos Delivery
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.chamarEntregadorAuto}
+                      onChange={() => saveSettings({...settings, chamarEntregadorAuto: !settings.chamarEntregadorAuto})}
+                      ariaLabel="Chamar entregador automaticamente"
+                    />
+                  </div>
+                )}
                 <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 hover:border-blue-300 transition-colors">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
@@ -1338,6 +1401,8 @@ const advanceStatus = async (pedido) => {
         />
       )}
 
+      <ToastContainer toasts={toasts} />
+
       {/* Clusters Flutuantes */}
       {uniqueClusters
         .filter(c => visibleClusters.includes(c.clusterId))
@@ -1455,8 +1520,10 @@ function KanbanColumn({ title, count, children, color, icon, isCollapsible, isCo
       {!isCollapsed && (
         <div className="flex-1 p-3 overflow-y-auto overflow-x-hidden custom-scrollbar">
           {children.length > 0 ? (
-            <div className={`flex flex-row flex-wrap gap-3 ${
-              columnWidth === 'narrow' ? '' : columnWidth === 'wide' ? '' : ''
+            <div className={`grid gap-3 ${
+              columnWidth === 'wide'
+                ? 'grid-cols-2'
+                : 'grid-cols-1'
             }`}>
               {children}
             </div>
@@ -1536,7 +1603,7 @@ function OrderCard({
   return (
     <div 
       onClick={onClick} 
-      className={`relative bg-white p-3 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer border group ${colorThemes[color]} ${
+      className={`relative bg-white p-3 rounded-lg shadow-sm hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98] transition-all cursor-pointer border group flex flex-col justify-between ${colorThemes[color]} ${
         isUrgent && !isDone ? 'ring-1 ring-red-400' : ''
       } ${isNarrowColumn ? 'w-full' : 'max-w-[280px] flex-1'}`}
       tabIndex={0}
@@ -1555,16 +1622,22 @@ function OrderCard({
           </span>
           <span className="text-[10px] text-gray-500">{formatTime(pedido.createdAt)}</span>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity font-medium flex items-center gap-1">
+            <i className="fas fa-expand-alt text-[8px]"></i>
+            ver detalhes
+          </span>
         
         <div className="flex items-center gap-2">
-          {/* Badge de tempo ANTES do preço, sem sobreposição */}
-          {isUrgent && !isDone && (
+            {/* Badge de tempo ANTES do preço, sem sobreposição */}
+            {isUrgent && !isDone && (
             <div className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shadow-md flex items-center gap-1">
               <i className="fas fa-clock"></i>
               {minutes}min
             </div>
           )}
           <span className="text-sm font-black text-gray-900 whitespace-nowrap">{formatCurrency(pedido.total)}</span>
+          </div>
         </div>
       </div>
 
@@ -1579,6 +1652,16 @@ function OrderCard({
         {pedido.cliente?.totalPedidos > 1 && (
           <span className="text-[9px] text-emerald-600 font-bold">★{pedido.cliente.totalPedidos}</span>
         )}
+      </div>
+
+      {/* Badge tipo do pedido */}
+      <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold mb-2 ${
+        pedido.tipo === 'Delivery'
+          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+          : 'bg-orange-50 text-orange-700 border border-orange-200'
+      }`}>
+        <i className={`fas ${pedido.tipo === 'Delivery' ? 'fa-motorcycle' : 'fa-store'} text-[9px]`}></i>
+        {pedido.tipo === 'Delivery' ? 'Entrega' : 'Balcão'}
       </div>
 
       {/* Badge de Cluster COM BOTÃO "CRIAR ROTA" */}
@@ -1610,13 +1693,24 @@ function OrderCard({
           </div>
         </div>
       )}
-
+      {/* Badge de entregador Box Delivery */}
+      {pedido.boxDelivery?.despachado && (
+        <div className="mb-2 flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-50 border border-emerald-200">
+          <i className="fas fa-motorcycle text-emerald-600 text-[10px]"></i>
+          <span className="text-[10px] font-bold text-emerald-700">Entregador Chamado</span>
+          {pedido.boxDelivery?.uuid && (
+            <span className="text-[9px] text-emerald-500 ml-auto">
+              #{pedido.boxDelivery.uuid.slice(0, 6)}
+            </span>
+          )}
+        </div>
+      )}
       {/* Itens (resumido) */}
       <div className="text-[11px] mb-2 space-y-1">
         {pedido.itens.slice(0, 2).map((item, idx) => (
           <div key={idx} className="flex items-start gap-1">
             <span className="font-black text-gray-900 min-w-[18px]">{item.quantidade}x</span>
-            <span className="text-gray-700 font-semibold truncate flex-1">{item.nome}</span>
+            <span className="text-gray-700 font-semibold truncate flex-1">{item.nome.replace(/\s*\(padrão\)/gi, '').trim()}</span>
           </div>
         ))}
         {pedido.itens.length > 2 && (
@@ -1963,6 +2057,33 @@ function OrderModal({ pedido, onClose, onPrint, onAdvance, isLoading, pedidos, o
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function ToastContainer({ toasts }) {
+  const styles = {
+    success: { bar: 'bg-emerald-500', box: 'bg-white border-emerald-300 text-emerald-900', icon: 'fa-check-circle text-emerald-500' },
+    error:   { bar: 'bg-red-500',     box: 'bg-white border-red-300     text-red-900',     icon: 'fa-times-circle text-red-500' },
+    warning: { bar: 'bg-yellow-400',  box: 'bg-white border-yellow-300  text-yellow-900',  icon: 'fa-exclamation-triangle text-yellow-500' },
+    info:    { bar: 'bg-blue-500',    box: 'bg-white border-blue-300    text-blue-900',    icon: 'fa-info-circle text-blue-500' },
+  }
+
+  return (
+    <div className="fixed bottom-5 right-5 z-[200] flex flex-col gap-3 max-w-sm pointer-events-none">
+      {toasts.map(toast => {
+        const s = styles[toast.type] || styles.info
+        return (
+          <div
+            key={toast.id}
+            className={`flex items-start gap-3 p-4 rounded-xl border shadow-xl text-sm font-medium pointer-events-auto ${s.box}`}
+          >
+            <i className={`fas ${s.icon} mt-0.5 shrink-0 text-base`}></i>
+            <span className="flex-1 leading-relaxed">{toast.message}</span>
+            <div className={`absolute bottom-0 left-0 h-1 rounded-b-xl ${s.bar} animate-shrink`} style={{ width: '100%' }}></div>
+          </div>
+        )
+      })}
     </div>
   )
 }
