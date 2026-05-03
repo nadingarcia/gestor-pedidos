@@ -2084,6 +2084,7 @@ export default function OrderManager() {
               onClose={() => toggleClusterPin(cluster.clusterId)}
             />
           ))}
+          <ElectronBanner />
       </div>
     </TickProvider>
   )
@@ -3225,6 +3226,89 @@ function NexBotBadge({ status }) {
       <span className={`w-2 h-2 rounded-full ${c.dot}`} aria-hidden="true" />
       <i className="fab fa-whatsapp" aria-hidden="true" />
       {c.text}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ElectronBanner — aviso quando o gestor está rodando no navegador
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ElectronBanner() {
+  const [dismissed, setDismissed] = useState(false)
+  const [downloadUrl, setDownloadUrl] = useState('https://github.com/nadingarcia/gestor-pedidos/releases/latest')
+
+  useEffect(() => {
+    fetch('https://api.github.com/repos/nadingarcia/gestor-pedidos/releases/latest')
+      .then(r => r.json())
+      .then(data => {
+        const exe = data.assets?.find(a => a.name.endsWith('.exe'))
+        if (exe) setDownloadUrl(exe.browser_download_url)
+      })
+      .catch(() => {}) // fallback já está no estado inicial
+  }, [])
+
+  if (electronAPI.isElectron() || dismissed) return null
+
+  return (
+    <div
+      className="fixed bottom-5 left-5 z-[200] max-w-sm w-full bg-white border-2 border-[#7f22fe] rounded-2xl shadow-2xl overflow-hidden"
+      role="alert"
+      aria-live="polite"
+    >
+      <div className="bg-[#7f22fe] px-4 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-white font-bold text-sm">
+          <i className="fas fa-bolt" aria-hidden="true"></i>
+          Gestor de Pedidos — Versão Desktop
+        </div>
+        <button
+          onClick={() => setDismissed(true)}
+          className="text-white/70 hover:text-white transition-colors"
+          aria-label="Fechar aviso"
+          type="button"
+        >
+          <i className="fas fa-times text-sm" aria-hidden="true"></i>
+        </button>
+      </div>
+
+      <div className="p-4 space-y-3">
+        <p className="text-sm text-gray-700 font-medium leading-relaxed">
+          Você está usando o Gestor no navegador.{' '}
+          <strong className="text-gray-900">Algumas funcionalidades estão indisponíveis:</strong>
+        </p>
+
+        <ul className="space-y-1.5 text-sm text-gray-600">
+          {[
+            ['fa-print',     'Impressão automática na térmica'],
+            ['fa-tv',        'Display da cozinha (janela separada)'],
+            ['fa-bell',      'Notificações nativas do sistema'],
+            ['fa-plug',      'Bloqueio de suspensão do PC'],
+            ['fa-sync-alt',  'Sincronização em tempo real com cozinha'],
+          ].map(([icon, label]) => (
+            <li key={label} className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <i className={`fas ${icon} text-red-500 text-[10px]`} aria-hidden="true"></i>
+              </span>
+              <span>{label}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="pt-1 border-t border-gray-100">
+          <p className="text-xs text-gray-500 mb-2">
+            Baixe o app desktop para ter a experiência completa:
+          </p>
+          <a
+            href={downloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 w-full py-2.5 bg-[#7f22fe] hover:bg-[#6b1de0] text-white rounded-lg font-bold text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
+          >
+            <i className="fas fa-download" aria-hidden="true"></i>
+            Baixar Gestor de Pedidos (.exe)
+          </a>
+        </div>
+      </div>
     </div>
   )
 }
