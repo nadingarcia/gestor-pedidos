@@ -3307,6 +3307,14 @@ function ElectronBanner() {
             <i className="fas fa-download" aria-hidden="true"></i>
             Baixar Gestor de Pedidos (.exe)
           </a>
+
+          {/* Aviso SmartScreen */}
+          <p className="text-[11px] text-gray-400 text-center mt-2 leading-relaxed">
+            <i className="fas fa-shield-alt mr-1"></i>
+            Se o Windows exibir um aviso de segurança, clique em{' '}
+            <strong className="text-gray-500">"Mais informações"</strong> e depois em{' '}
+            <strong className="text-gray-500">"Executar mesmo assim"</strong>.
+          </p>
         </div>
       </div>
     </div>
