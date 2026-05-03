@@ -176,66 +176,72 @@ export default function Login() {
             SEÇÃO ESQUERDA - Branding
         ======================================================================== */}
         <aside className="hidden lg:flex flex-col justify-center p-12">
-          
-          {/* Logo */}
-          <div className="flex items-center gap-4 mb-12">
-            <div className="w-16 h-16 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg">
-              <i className="fas fa-bolt text-white text-2xl"></i>
-            </div>
-            <div>
-              <h2 className="text-gray-900 text-3xl font-bold tracking-tight">NEX
-                <i className="fas fa-bolt"></i>
-                FOOD</h2>
-              <p className="text-gray-500 text-sm font-medium">Gestão de Pedidos Premium</p>
-            </div>
-          </div>
 
-          <h3 className="text-4xl text-gray-900 font-bold mb-4 leading-tight">
-            Transforme a gestão do seu restaurante
-          </h3>
-          <p className="text-gray-600 text-lg mb-12 leading-relaxed">
-            Controle total sobre pedidos, equipe e clientes em tempo real.
-          </p>
+  {/* Logo */}
+  <div className="flex items-center gap-4 mb-12">
+    <div className="w-16 h-16 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg">
+      <i className="fas fa-bolt text-white text-2xl"></i>
+    </div>
+    <div>
+      <h2 className="text-gray-900 text-3xl font-bold tracking-tight">NEXFOOD</h2>
+      <p className="text-gray-500 text-sm font-medium">Tecnologia para Delivery</p>
+    </div>
+  </div>
 
-          {/* Features */}
-          <ul className="space-y-6" role="list">
-            {[
-              { icon: 'bolt', title: 'Tempo Real', desc: 'Acompanhe todos os pedidos instantaneamente', color: 'purple' },
-              { icon: 'chart-line', title: 'Análises Detalhadas', desc: 'Relatórios completos de vendas', color: 'blue' },
-              { icon: 'users', title: 'Gestão de Equipe', desc: 'Organize toda sua operação', color: 'emerald' }
-            ].map((item, i) => (
-              <li key={i} className="flex items-start gap-4">
-                <div className={`flex-shrink-0 w-12 h-12 rounded-lg bg-${item.color}-50 border border-${item.color}-200 flex items-center justify-center`}>
-                  <i className={`fas fa-${item.icon} text-${item.color}-600 text-lg`}></i>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-gray-900 text-base">{item.title}</h4>
-                  <p className="text-sm text-gray-600 mt-0.5">{item.desc}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
+  <h3 className="text-4xl text-gray-900 font-bold mb-4 leading-tight">
+    Seu restaurante operando no máximo
+  </h3>
+  <p className="text-gray-600 text-lg mb-12 leading-relaxed">
+    Do pedido à entrega — sem comissão por pedido, sem tablet na cozinha, sem papel perdido.
+  </p>
 
-          {/* Depoimento */}
-          <div className="mt-12 pt-8 border-t border-gray-200">
-            <div className="flex gap-4">
-              <div className="w-12 h-12 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0">
-                <i className="fas fa-quote-left text-gray-400 text-sm"></i>
-              </div>
-              <div>
-                <p className="text-gray-700 italic leading-relaxed mb-2">
-                  "Melhor sistema que já usamos. Revolucionou nosso atendimento!"
-                </p>
-                <p className="text-gray-500 text-sm font-medium">— Restaurante Sabor Divino</p>
-                <div className="flex gap-0.5 mt-2" aria-label="5 estrelas">
-                  {[...Array(5)].map((_, i) => (
-                    <i key={i} className="fas fa-star text-yellow-400 text-xs"></i>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </aside>
+  {/* Features reais */}
+  <ul className="space-y-5" role="list">
+    {[
+      {
+        icon: 'fa-columns',
+        title: 'Kanban em tempo real',
+        desc: 'Recebido → Preparo → Entrega → Entregue. Avance pedidos com um clique.',
+        color: 'purple'
+      },
+      {
+        icon: 'fa-tv',
+        title: 'Display de cozinha',
+        desc: 'Segunda tela via HDMI. Cozinheiro vê os pedidos sem perguntar nada ao caixa.',
+        color: 'blue'
+      },
+      {
+        icon: 'fa-print',
+        title: 'Impressão automática',
+        desc: 'Cupom térmico 80mm imprime sozinho ao aceitar o pedido.',
+        color: 'emerald'
+      },
+      {
+        icon: 'fa-whatsapp fab',
+        title: 'NexBot WhatsApp',
+        desc: 'Notifica o cliente automaticamente a cada mudança de status.',
+        color: 'green'
+      },
+      {
+        icon: 'fa-route',
+        title: 'Rotas otimizadas',
+        desc: 'Agrupa entregas próximas e gera rota no Google Maps com múltiplas paradas.',
+        color: 'orange'
+      },
+    ].map((item, i) => (
+      <li key={i} className="flex items-start gap-4">
+        <div className={`flex-shrink-0 w-10 h-10 rounded-lg bg-${item.color}-50 border border-${item.color}-200 flex items-center justify-center`}>
+          <i className={`fas ${item.icon} text-${item.color}-600`}></i>
+        </div>
+        <div>
+          <h4 className="font-semibold text-gray-900 text-sm">{item.title}</h4>
+          <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{item.desc}</p>
+        </div>
+      </li>
+    ))}
+  </ul>
+
+</aside>
 
         {/* ========================================================================
             FORMULÁRIO PRINCIPAL
