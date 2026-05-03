@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import ProtectedRoute from './components/ProtectedRoute'
 import OrderManager from './pages/OrderManager'
+import KitchenDisplay from './pages/KitchenDisplay'
 
 export default function App() {
   return (
@@ -18,6 +19,8 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+
+      <Route path="/kitchen" element={<KitchenDisplay />} />
       
       <Route path="/" element={<Navigate to="/login" replace />} />
     </Routes>

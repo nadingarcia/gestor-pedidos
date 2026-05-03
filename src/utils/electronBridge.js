@@ -17,6 +17,25 @@ export const electronAPI = {
   checkAutoLaunch: () => safeInvoke(window.electronAPI.checkAutoLaunch),
   getPrinters: () => safeInvoke(window.electronAPI.getPrinters),
   printOrder: (printerName, htmlContent) => safeInvoke(window.electronAPI.printOrder, printerName, htmlContent),
+  setPowerBlocker: (enable) => safeInvoke(window.electronAPI.setPowerBlocker, enable),
+  openKitchenDisplay: () => safeInvoke(window.electronAPI.openKitchenDisplay),
+  pushKitchenOrders: (orders) => {
+    if (!isElectron()) return
+    window.electronAPI.pushKitchenOrders(orders)
+  },
+  onKitchenOrders: (cb) => {
+    if (!isElectron()) return
+    window.electronAPI.onKitchenOrders(cb)
+  },
+  offKitchenOrders: () => {
+    if (!isElectron()) return
+    window.electronAPI.offKitchenOrders()
+  },
+  onKitchenReady: (cb) => {
+  if (!isElectron()) return
+  window.electronAPI.onKitchenReady(cb)
+},
+
   sendNotification: (title, body) => safeInvoke(window.electronAPI.sendNotification, title, body),
   isElectron,
 };

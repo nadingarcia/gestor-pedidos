@@ -505,6 +505,22 @@ export default function OrderManager() {
     return () => document.removeEventListener('fullscreenchange', handleChange)
   }, [])
 
+  // ── Bloqueio de suspensão enquanto o gestor estiver aberto ───────────────
+  useEffect(() => {
+    if (!electronAPI.isElectron()) return
+    electronAPI.setPowerBlocker(true)
+    return () => { electronAPI.setPowerBlocker(false) }
+  }, [])
+
+  useEffect(() => {
+  if (!electronAPI.isElectron()) return
+  electronAPI.onKitchenReady(() => {
+    electronAPI.pushKitchenOrders(
+      pedidos.filter(p => p.status === 'Em preparação')
+    )
+  })
+}, [pedidos])
+
   // ── Carregar impressoras disponíveis (Electron only) ──────────────────────
   useEffect(() => {
     const loadPrinters = async () => {
@@ -737,6 +753,12 @@ export default function OrderManager() {
       }
 
       setPedidos(pedidosConfirmados)
+
+      // Empurra pedidos em preparação para a janela da cozinha
+      electronAPI.pushKitchenOrders(
+        pedidosConfirmados.filter(p => p.status === 'Em preparação')
+      )
+      
       // Registra timestamp para o indicador "Atualizado há Xs"
       setLastUpdated(Date.now())
       setSecondsSinceUpdate(0)
@@ -1182,6 +1204,17 @@ export default function OrderManager() {
               >
                 <i className="fas fa-sliders-h text-sm" aria-hidden="true"></i>
               </button>
+
+              {electronAPI.isElectron() && (
+                <button
+                  onClick={() => electronAPI.openKitchenDisplay()}
+                  className="w-10 h-10 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 transition-colors"
+                  title="Abrir display da cozinha"
+                  aria-label="Abrir display da cozinha em nova janela"
+                >
+                  <i className="fas fa-tv text-sm" aria-hidden="true"></i>
+                </button>
+              )}
 
               {/* Tela cheia */}
               <button

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, powerSaveBlocker } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import AutoLaunch from 'auto-launch'
@@ -55,15 +55,18 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show()
-    
-    // 🔹 VERIFICAÇÃO DE ATUALIZAÇÃO
-    if (!isDev) {
+ mainWindow.once('ready-to-show', () => {
+  mainWindow.show()
+  
+  if (!isDev) {
+    try {
       log.info('App pronto. Verificando atualizações...')
       autoUpdater.checkForUpdatesAndNotify()
+    } catch (err) {
+      log.error('Erro ao verificar atualizações:', err)
     }
-  })
+  }
+})
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -204,6 +207,70 @@ ipcMain.handle('print-order', async (event, { printerName, html }) => {
   } catch (error) {
     log.error('Erro ao imprimir:', error)
     return { success: false, error: error.message }
+  }
+})
+
+let powerBlockerId = null
+
+ipcMain.handle('set-power-blocker', (_, enable) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { active: false }  // ← adiciona essa linha
+  
+  if (enable && powerBlockerId === null) {
+    powerBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+    log.info('Power blocker ativo, id:', powerBlockerId)
+  } else if (!enable && powerBlockerId !== null) {
+    powerSaveBlocker.stop(powerBlockerId)
+    powerBlockerId = null
+    log.info('Power blocker desativado')
+  }
+  return { active: powerBlockerId !== null }
+})
+
+// 🔹 Display da cozinha
+let kitchenWindow = null
+
+ipcMain.handle('open-kitchen-display', () => {
+  if (kitchenWindow && !kitchenWindow.isDestroyed()) {
+    kitchenWindow.focus()
+    return { success: true, alreadyOpen: true }
+  }
+
+  kitchenWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    title: 'Cozinha — NexFood',
+    icon: path.join(__dirname, '../public/logo.png'),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
+    },
+    backgroundColor: '#111827',
+    show: false,
+  })
+
+  const isDev = process.env.NODE_ENV === 'development'
+  const url = isDev
+    ? 'http://localhost:5173/#/kitchen'
+    : `file://${path.join(__dirname, '../dist/index.html')}#/kitchen`
+
+  kitchenWindow.loadURL(url)
+  kitchenWindow.once('ready-to-show', () => {
+    kitchenWindow.show()
+    kitchenWindow.setFullScreen(true)
+  })
+  kitchenWindow.webContents.on('did-finish-load', () => {
+  mainWindow?.webContents.send('kitchen-ready')
+})
+  kitchenWindow.on('closed', () => { kitchenWindow = null })
+
+  return { success: true }
+})
+
+// Recebe pedidos do renderer principal e repassa para a janela da cozinha
+ipcMain.on('push-kitchen-orders', (_, orders) => {
+  if (kitchenWindow && !kitchenWindow.isDestroyed()) {
+    kitchenWindow.webContents.send('kitchen-orders', orders)
   }
 })
 
