@@ -14,6 +14,7 @@ import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
 import { notifyOrderStatus } from '@utils/nexBotNotify'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch } from '../utils/apiFetch'
+import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLETONS DE MÓDULO
@@ -187,11 +188,6 @@ function useFocusTrap(isActive, onEscape) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HOOK: useRestaurantConfig
-// Lê o localStorage apenas uma vez por mount (useMemo com deps vazias).
-// Problema anterior: renderPedidoToHTML chamava getItem 4x a cada impressão,
-// incluindo chamadas dentro de loops de auto-aceitação.
-// ─────────────────────────────────────────────────────────────────────────────
 
 function useRestaurantConfig() {
   return useMemo(() => {
@@ -235,12 +231,28 @@ const fuzzyMatch = (text, query) => {
 // auto-aceitar onde a função é chamada em loop.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const renderPedidoToHTML = (pedido, restaurantConfig = {}) => {
+const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => {
   const {
     nome: nomeRestaurante = 'Restaurante',
     endereco: enderecoRestaurante = '',
     cnpj: cnpjFormatado = '',
   } = restaurantConfig
+
+  const { fonteTamanho = 12, negritar = false } = printConfig
+
+  // Escala proporcional derivada do tamanho base escolhido
+  const t = {
+    base:  `${fonteTamanho}px`,
+    title: `${Math.round(fonteTamanho * 1.35)}px`,
+    lg:    `${Math.round(fonteTamanho * 1.1)}px`,
+    total: `${Math.round(fonteTamanho * 1.45)}px`,
+    sm:    `${Math.max(9, fonteTamanho - 1)}px`,
+    xs:    `${Math.max(8, fonteTamanho - 2)}px`,
+    wHeavy: '900',
+    wBold:  negritar ? '900' : '800',
+    wMid:   negritar ? '800' : '700',
+    wBase:  negritar ? '700' : 'normal',
+  }
 
   const itensHtml = pedido.itens
     .map((item) => {
@@ -252,18 +264,15 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}) => {
       const obsHtml = item.obs
         ? `<div class="obs"><strong>OBS:</strong> ${item.obs}</div>`
         : ''
-
       return `
-      <div class="item-row">
-        <div class="item-header">
-          <span class="qty">${item.quantidade}x</span>
-          <span class="name">${nomeItem}</span>
-          <span class="item-price">${formatCurrency(totalItem)}</span>
-        </div>
-        ${complementosHtml}
-        ${obsHtml}
-      </div>
-    `
+        <div class="item-row">
+          <div class="item-header">
+            <span class="qty">${item.quantidade}x</span>
+            <span class="name">${nomeItem}</span>
+            <span class="item-price">${formatCurrency(totalItem)}</span>
+          </div>
+          ${complementosHtml}${obsHtml}
+        </div>`
     })
     .join('')
 
@@ -273,42 +282,59 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}) => {
       <head>
         <meta charset="utf-8">
         <style>
+          /* ── Tokens derivados das preferências do restaurante ── */
+          :root {
+            --fs-base:  ${t.base};
+            --fs-title: ${t.title};
+            --fs-lg:    ${t.lg};
+            --fs-total: ${t.total};
+            --fs-sm:    ${t.sm};
+            --fs-xs:    ${t.xs};
+            --fw-heavy: ${t.wHeavy};
+            --fw-bold:  ${t.wBold};
+            --fw-mid:   ${t.wMid};
+            --fw-base:  ${t.wBase};
+          }
+
           @page { margin: 0; size: 72mm auto; }
           html, body { height: auto !important; overflow: hidden; }
           * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
+
           body {
             font-family: 'Courier New', Courier, monospace;
             width: 70mm;
             margin: 0;
             padding: 4px 6px 2px 6px;
             color: #000;
-            font-size: 12px;
+            font-size: var(--fs-base);
+            font-weight: var(--fw-base);
             line-height: 1.5;
             -webkit-font-smoothing: none;
             display: inline-block;
           }
-          .text-center { text-align: center; }
-          .title { font-size: 16px; font-weight: 900; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
-          .restaurant-address { font-size: 11px; font-weight: 700; color: #000; margin-bottom: 6px; }
-          .subtitle { font-size: 12px; font-weight: 800; color: #000; border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
-          .info-group { margin-bottom: 8px; }
-          .info-label { font-size: 11px; text-transform: uppercase; font-weight: 900; color: #000; border-bottom: 1px solid #000; margin-bottom: 3px; }
-          .info-value { font-size: 13px; font-weight: 800; color: #000; }
-          .info-sub { font-size: 12px; font-weight: 700; color: #000; }
+
+          .text-center  { text-align: center; }
+          .title        { font-size: var(--fs-title); font-weight: var(--fw-heavy); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
+          .restaurant-address { font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; margin-bottom: 6px; }
+          .subtitle     { font-size: var(--fs-base); font-weight: var(--fw-bold); color: #000; border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
+          .info-group   { margin-bottom: 8px; }
+          .info-label   { font-size: var(--fs-sm); text-transform: uppercase; font-weight: var(--fw-heavy); color: #000; border-bottom: 1px solid #000; margin-bottom: 3px; }
+          .info-value   { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: #000; }
+          .info-sub     { font-size: var(--fs-base); font-weight: var(--fw-mid); color: #000; }
           .divider-bold { border-top: 2px solid #000; margin: 8px 0; }
-          .divider { border-top: 1px dashed #000; margin: 8px 0; }
-          .item-row { margin-bottom: 8px; }
-          .item-header { display: flex; align-items: flex-start; justify-content: space-between; }
-          .qty { font-weight: 900; margin-right: 5px; font-size: 13px; min-width: 22px; color: #000; }
-          .name { font-weight: 800; flex: 1; font-size: 12px; word-break: break-word; color: #000; }
-          .item-price { font-weight: 900; font-size: 12px; color: #000; text-align: right; white-space: nowrap; margin-left: 4px; min-width: 52px; }
-          .complementos { margin-left: 27px; font-size: 11px; font-weight: 800; color: #000; }
-          .obs { margin-left: 27px; margin-top: 3px; font-weight: 900; font-size: 11px; border-left: 3px solid #000; padding-left: 4px; color: #000; }
-          .totals-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 12px; font-weight: 800; color: #000; }
-          .total-big { font-size: 17px; font-weight: 900; margin-top: 5px; color: #000; }
-          .payment-box { border: 2px solid #000; padding: 5px; margin-top: 8px; text-align: center; font-weight: 900; font-size: 13px; color: #000; }
-          .footer { margin-top: 8px; margin-bottom: 0; text-align: center; font-size: 11px; font-weight: 800; color: #000; border-top: 2px dashed #000; padding-top: 6px; padding-bottom: 4px; }
-          .fiel { font-size: 11px; font-weight: 900; color: #000; margin-top: 2px; }
+          .divider      { border-top: 1px dashed #000; margin: 8px 0; }
+          .item-row     { margin-bottom: 8px; }
+          .item-header  { display: flex; align-items: flex-start; justify-content: space-between; }
+          .qty          { font-weight: var(--fw-heavy); margin-right: 5px; font-size: var(--fs-lg); min-width: 22px; color: #000; }
+          .name         { font-weight: var(--fw-bold); flex: 1; font-size: var(--fs-base); word-break: break-word; color: #000; }
+          .item-price   { font-weight: var(--fw-heavy); font-size: var(--fs-base); color: #000; text-align: right; white-space: nowrap; margin-left: 4px; min-width: 52px; }
+          .complementos { margin-left: 27px; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; }
+          .obs          { margin-left: 27px; margin-top: 3px; font-weight: var(--fw-heavy); font-size: var(--fs-sm); border-left: 3px solid #000; padding-left: 4px; color: #000; }
+          .totals-row   { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: var(--fs-base); font-weight: var(--fw-bold); color: #000; }
+          .total-big    { font-size: var(--fs-total); font-weight: var(--fw-heavy); margin-top: 5px; color: #000; }
+          .payment-box  { border: 2px solid #000; padding: 5px; margin-top: 8px; text-align: center; font-weight: var(--fw-heavy); font-size: var(--fs-lg); color: #000; }
+          .footer       { margin-top: 8px; margin-bottom: 0; text-align: center; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; border-top: 2px dashed #000; padding-top: 6px; padding-bottom: 4px; }
+          .fiel         { font-size: var(--fs-sm); font-weight: var(--fw-heavy); color: #000; margin-top: 2px; }
         </style>
       </head>
       <body>
@@ -329,20 +355,14 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}) => {
           ${pedido.cliente?.totalPedidos > 0 ? `<div class="fiel">★ Cliente Fiel (${pedido.cliente.totalPedidos}º pedido)</div>` : ''}
         </div>
 
-        ${
-          pedido.tipo === 'Delivery' && pedido.enderecoEntrega
-            ? `
+        ${pedido.tipo === 'Delivery' && pedido.enderecoEntrega ? `
           <div class="info-group">
             <div class="info-label">Entrega</div>
-            <div class="info-value">
-              ${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}
-            </div>
+            <div class="info-value">${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}</div>
             <div class="info-sub">${pedido.enderecoEntrega.bairro} — ${pedido.enderecoEntrega.cidade}</div>
             ${pedido.enderecoEntrega.complemento ? `<div class="info-sub">Comp: ${pedido.enderecoEntrega.complemento}</div>` : ''}
           </div>
-        `
-            : `<div class="payment-box">★ RETIRADA NO BALCÃO ★</div>`
-        }
+        ` : `<div class="payment-box">★ RETIRADA NO BALCÃO ★</div>`}
 
         <div class="divider-bold"></div>
         ${itensHtml}
@@ -355,16 +375,10 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}) => {
         <div class="divider"></div>
         <div class="info-label">Pagamento</div>
         <div class="info-value">${
-          {
-            dinheiro: 'Dinheiro',
-            pix: 'Pix na Entrega',
-            debito_maq: 'Maquininha',
-            cartao: 'Cartão na Entrega',
-            online_card: 'Cartão Online',
-            pix_online: 'Pix Online',
-            mercadopago: 'Mercado Pago',
-          }[pedido.formaPagamento] ||
-          pedido.formaPagamento?.replace(/_/g, ' ').toUpperCase()
+          { dinheiro: 'Dinheiro', pix: 'Pix na Entrega', debito_maq: 'Maquininha',
+            cartao: 'Cartão na Entrega', online_card: 'Cartão Online',
+            pix_online: 'Pix Online', mercadopago: 'Mercado Pago' }[pedido.formaPagamento]
+          || pedido.formaPagamento?.replace(/_/g, ' ').toUpperCase()
         }</div>
         ${pedido.trocoPara ? `<div class="info-sub">Troco para: ${formatCurrency(pedido.trocoPara)}</div>` : ''}
 
@@ -470,6 +484,8 @@ export default function OrderManager() {
       parseInt(localStorage.getItem('capacidadeEntrega')) || 4,
     chamarEntregadorAuto:
       localStorage.getItem('chamarEntregadorAuto') !== 'false',
+    fonteTamanho: parseInt(localStorage.getItem('fonteTamanho')) || 12,  // ← faltava
+    negritar: localStorage.getItem('negritar') === 'true',
   })
 
   /**
@@ -571,41 +587,25 @@ export default function OrderManager() {
   // ── Impressão: restaurantConfig passado como parâmetro (sem getItem extra) ─
   const handlePrint = useCallback(
     async (pedido) => {
-      const html = renderPedidoToHTML(pedido, restaurantConfig)
+      const html = renderPedidoToHTML(pedido, restaurantConfig, {
+        fonteTamanho: settingsRef.current.fonteTamanho,
+        negritar: settingsRef.current.negritar,
+      })
 
-      if (
-        electronAPI?.isElectron?.() &&
-        settingsRef.current.impressoraAutomatica
-      ) {
-        await electronAPI.printOrder(
-          settingsRef.current.impressoraAutomatica,
-          html
-        )
+      if (electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica) {
+        await electronAPI.printOrder(settingsRef.current.impressoraAutomatica, html)
         return
       }
 
       const w = window.open('', '_blank', 'width=380,height=700')
-      if (!w) {
-        alert('Pop-up bloqueado! Permita pop-ups para este site.')
-        return
-      }
+      if (!w) { alert('Pop-up bloqueado! Permita pop-ups para este site.'); return }
       w.document.open()
       w.document.write(html)
       w.document.close()
       w.onload = () => {
-        setTimeout(() => {
-          w.focus()
-          w.print()
-          w.onafterprint = () => w.close()
-        }, 200)
+        setTimeout(() => { w.focus(); w.print(); w.onafterprint = () => w.close() }, 200)
       }
-      // Fallback caso onload não dispare em alguns browsers
-      setTimeout(() => {
-        if (!w.closed) {
-          w.focus()
-          w.print()
-        }
-      }, 1500)
+      setTimeout(() => { if (!w.closed) { w.focus(); w.print() } }, 1500)
     },
     [restaurantConfig]
   )
@@ -1591,466 +1591,310 @@ export default function OrderManager() {
             aria-hidden={!(showSettings && !showFilters)}
             aria-label="Painel de configurações"
           >
-            <div className="p-6 space-y-8">
+            <div className="p-4 space-y-3">
 
-              {/* Impressão */}
-              <section className="space-y-4" aria-labelledby="secao-impressao">
-                <h3
-                  id="secao-impressao"
-                  className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2"
-                >
-                  <i className="fas fa-print" aria-hidden="true"></i> Impressão
-                </h3>
-                <div className="space-y-3">
-                  <label htmlFor="select-impressora" className="sr-only">
-                    Selecionar impressora automática
-                  </label>
-                  <select
-                    id="select-impressora"
-                    value={settings.impressoraAutomatica}
-                    onChange={(e) =>
-                      saveSettings({
-                        ...settings,
-                        impressoraAutomatica: e.target.value,
-                      })
-                    }
-                    className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-300 text-gray-900 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none transition-all"
-                  >
-                    <option value="">Manual (Sem impressão auto)</option>
-                    {printers.map((p) => (
-                      <option key={p.name} value={p.name}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+            {/* ── Impressão ─────────────────────────────────────────────── */}
+            <AccordionSection id="acc-impressao" icon="print" title="Impressão" defaultOpen={true}>
 
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200 hover:border-gray-300 transition-colors">
-                    <span className="text-sm text-gray-900 font-medium">
-                      Aceitar Automaticamente
-                    </span>
+              <label htmlFor="select-impressora" className="sr-only">Impressora automática</label>
+              <select
+                id="select-impressora"
+                value={settings.impressoraAutomatica}
+                onChange={(e) => saveSettings({ ...settings, impressoraAutomatica: e.target.value })}
+                className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-300 text-gray-900 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none transition-all"
+              >
+                <option value="">Manual (sem impressão automática)</option>
+                {printers.map((p) => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <span className="text-sm text-gray-900 font-medium">Aceitar Automaticamente</span>
+                <Switch
+                  checked={settings.aceitarAutomatico}
+                  onChange={() => saveSettings({ ...settings, aceitarAutomatico: !settings.aceitarAutomatico })}
+                  ariaLabel="Ativar aceitação automática de pedidos"
+                />
+              </div>
+
+              {/* Estilo do cupom */}
+              <div className="rounded-lg border border-gray-200 overflow-hidden">
+                <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <i className="fas fa-text-height text-gray-400" aria-hidden="true"></i>
+                    Estilo do Cupom
+                  </p>
+                </div>
+                <div className="p-4 space-y-4 bg-white">
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-600">Tamanho da fonte</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: 'Pequeno', size: 10 },
+                        { label: 'Normal',  size: 12 },
+                        { label: 'Grande',  size: 15 },
+                      ].map(({ label, size }) => (
+                        <button
+                          key={size}
+                          onClick={() => saveSettings({ ...settings, fonteTamanho: size })}
+                          type="button"
+                          className={`py-3 rounded-lg border-2 transition-all text-center focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
+                            settings.fonteTamanho === size
+                              ? 'bg-[#7f22fe] border-[#7f22fe] text-white shadow-md'
+                              : 'bg-white border-gray-200 text-gray-700 hover:border-[#7f22fe]/40'
+                          }`}
+                          aria-pressed={settings.fonteTamanho === size}
+                        >
+                          <span className="block font-bold leading-tight" style={{ fontFamily: 'Courier New, monospace', fontSize: size }}>
+                            {label}
+                          </span>
+                          <span className={`block text-[10px] mt-0.5 ${settings.fonteTamanho === size ? 'text-purple-200' : 'text-gray-400'}`}>
+                            {size}px
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-900 font-medium">Negrito</p>
+                      <p className="text-xs text-gray-500">Letras mais fortes e marcadas</p>
+                    </div>
                     <Switch
-                      checked={settings.aceitarAutomatico}
-                      onChange={() =>
-                        saveSettings({
-                          ...settings,
-                          aceitarAutomatico: !settings.aceitarAutomatico,
-                        })
-                      }
-                      ariaLabel="Ativar aceitação automática de pedidos"
+                      checked={settings.negritar}
+                      onChange={() => saveSettings({ ...settings, negritar: !settings.negritar })}
+                      ariaLabel="Ativar texto em negrito no cupom"
                     />
                   </div>
+
+                  <button
+                    onClick={() => handlePrint(PEDIDO_TESTE_IMPRESSAO)}
+                    type="button"
+                    className="w-full py-2.5 rounded-lg border border-dashed border-gray-300 text-sm text-gray-500 hover:text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all font-medium flex items-center justify-center gap-2"
+                  >
+                    <i className="fas fa-print text-gray-400" aria-hidden="true"></i>
+                    Imprimir cupom de teste
+                  </button>
                 </div>
-              </section>
+              </div>
+            </AccordionSection>
 
-              {/* Sistema */}
-              <section className="space-y-4" aria-labelledby="secao-sistema">
-                <h3
-                  id="secao-sistema"
-                  className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2"
-                >
-                  <i className="fas fa-sliders-h" aria-hidden="true"></i> Sistema
-                </h3>
+            {/* ── Sistema ───────────────────────────────────────────────── */}
+            <AccordionSection id="acc-sistema" icon="sliders-h" title="Sistema">
 
-                <div className="space-y-4">
-                  {/* Tempo de refresh */}
-                  <div className="p-5 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="flex justify-between mb-3">
-                      <span className="text-sm font-semibold text-gray-900">
-                        Atualização Automática
-                      </span>
-                      <span className="text-sm font-bold text-[#7f22fe] bg-purple-50 px-3 py-1 rounded-full border border-purple-200">
-                        {settings.tempoRefresh}s
+              <div className="p-5 rounded-lg bg-gray-50 border border-gray-200">
+                <div className="flex justify-between mb-3">
+                  <span className="text-sm font-semibold text-gray-900">Atualização Automática</span>
+                  <span className="text-sm font-bold text-[#7f22fe] bg-purple-50 px-3 py-1 rounded-full border border-purple-200">
+                    {settings.tempoRefresh}s
+                  </span>
+                </div>
+                <input
+                  type="range" min="10" max="30" step="10"
+                  value={settings.tempoRefresh}
+                  onChange={(e) => saveSettings({ ...settings, tempoRefresh: parseInt(e.target.value) })}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider-purple"
+                  aria-label={`Tempo de atualização automática: ${settings.tempoRefresh} segundos`}
+                />
+                <div className="flex justify-between text-xs text-gray-500 mt-2 font-medium">
+                  <span>10s Rápido</span>
+                  <span>30s Lento</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <div>
+                  <span className="text-sm text-gray-900 font-medium">Notificações Push</span>
+                  <span className="text-xs text-gray-500 block">Teste ao ativar</span>
+                </div>
+                <Switch checked={settings.notificacoesPush} onChange={handleToggleNotification} ariaLabel="Ativar notificações push" />
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <span className="text-sm text-gray-900 font-medium">Efeito Sonoro</span>
+                <Switch
+                  checked={settings.somNotificacao}
+                  onChange={() => saveSettings({ ...settings, somNotificacao: !settings.somNotificacao })}
+                  ariaLabel="Ativar efeito sonoro"
+                />
+              </div>
+            </AccordionSection>
+
+            {/* ── Otimização de Entregas ────────────────────────────────── */}
+            <AccordionSection id="acc-entregas" icon="route" title="Otimização de Entregas">
+
+              {boxDeliveryAtivo && (
+                <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-emerald-200">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <i className="fas fa-motorcycle text-emerald-600 text-sm" aria-hidden="true"></i>
+                      <span className="text-sm text-gray-900 font-bold">Chamar Entregador Automático</span>
+                    </div>
+                    <p className="text-xs text-gray-600">Aciona a Box Delivery ao aceitar pedidos Delivery</p>
+                  </div>
+                  <Switch
+                    checked={settings.chamarEntregadorAuto}
+                    onChange={() => saveSettings({ ...settings, chamarEntregadorAuto: !settings.chamarEntregadorAuto })}
+                    ariaLabel="Chamar entregador automaticamente"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm text-gray-900 font-bold">Agrupar por Distância</span>
+                    <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full font-bold">BETA</span>
+                  </div>
+                  <p className="text-xs text-gray-600">Destaca pedidos próximos para otimizar rotas</p>
+                </div>
+                <Switch
+                  checked={settings.agruparPorDistancia}
+                  onChange={() => saveSettings({ ...settings, agruparPorDistancia: !settings.agruparPorDistancia })}
+                  ariaLabel="Ativar agrupamento por distância"
+                />
+              </div>
+
+              {settings.agruparPorDistancia && (
+                <>
+                  <div className="p-5 rounded-lg bg-white border-2 border-blue-200">
+                    <div className="flex justify-between items-center mb-3">
+                      <div>
+                        <span className="text-sm font-bold text-gray-900 block">Raio de Proximidade</span>
+                        <span className="text-xs text-gray-500">Até quantos km considera próximo?</span>
+                      </div>
+                      <span className="text-lg font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-lg border-2 border-blue-300">
+                        {settings.raioCluster}km
                       </span>
                     </div>
                     <input
-                      type="range"
-                      min="10"
-                      max="30"
-                      step="10"
-                      value={settings.tempoRefresh}
-                      onChange={(e) =>
-                        saveSettings({
-                          ...settings,
-                          tempoRefresh: parseInt(e.target.value),
-                        })
-                      }
-                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider-purple"
-                      aria-label={`Tempo de atualização automática: ${settings.tempoRefresh} segundos`}
+                      type="range" min="0.5" max="10" step="0.5"
+                      value={settings.raioCluster}
+                      onChange={(e) => saveSettings({ ...settings, raioCluster: parseFloat(e.target.value) })}
+                      className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
+                      aria-label={`Raio: ${settings.raioCluster}km`}
                     />
                     <div className="flex justify-between text-xs text-gray-500 mt-2 font-medium">
-                      <span>10s Rápido</span>
-                      <span>30s Lento</span>
+                      <span>0.5km Restrito</span><span>10km Amplo</span>
                     </div>
                   </div>
 
-                  {/* Notificações push */}
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200 hover:border-gray-300 transition-colors">
-                    <div className="flex flex-col">
-                      <span className="text-sm text-gray-900 font-medium">
-                        Notificações Push
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        Teste ao ativar
-                      </span>
-                    </div>
-                    <Switch
-                      checked={settings.notificacoesPush}
-                      onChange={handleToggleNotification}
-                      ariaLabel="Ativar notificações push do sistema"
-                    />
-                  </div>
-
-                  {/* Som */}
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200 hover:border-gray-300 transition-colors">
-                    <span className="text-sm text-gray-900 font-medium">
-                      Efeito Sonoro
-                    </span>
-                    <Switch
-                      checked={settings.somNotificacao}
-                      onChange={() =>
-                        saveSettings({
-                          ...settings,
-                          somNotificacao: !settings.somNotificacao,
-                        })
-                      }
-                      ariaLabel="Ativar efeito sonoro ao receber pedidos"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Otimização de entregas */}
-              <section className="space-y-4" aria-labelledby="secao-entregas">
-                <h3
-                  id="secao-entregas"
-                  className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2"
-                >
-                  <i className="fas fa-route" aria-hidden="true"></i> Otimização
-                  de Entregas
-                </h3>
-
-                <div className="space-y-4">
-                  {/* Box Delivery (condicional) */}
-                  {boxDeliveryAtivo && (
-                    <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-emerald-200 hover:border-emerald-300 transition-colors">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <i
-                            className="fas fa-motorcycle text-emerald-600 text-sm"
-                            aria-hidden="true"
-                          ></i>
-                          <span className="text-sm text-gray-900 font-bold">
-                            Chamar Entregador Automático
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-600 leading-relaxed">
-                          Aciona a Box Delivery ao aceitar pedidos Delivery
-                        </p>
-                      </div>
-                      <Switch
-                        checked={settings.chamarEntregadorAuto}
-                        onChange={() =>
-                          saveSettings({
-                            ...settings,
-                            chamarEntregadorAuto: !settings.chamarEntregadorAuto,
-                          })
-                        }
-                        ariaLabel="Chamar entregador automaticamente via Box Delivery"
-                      />
-                    </div>
-                  )}
-
-                  {/* Agrupar por distância */}
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200 hover:border-blue-300 transition-colors">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm text-gray-900 font-bold">
-                          Agrupar por Distância
+                  <div className="p-4 rounded-lg bg-white border-2 border-blue-100">
+                    <div className="flex justify-between items-center mb-3">
+                      <div>
+                        <span className="text-sm font-bold text-gray-900 block">
+                          <i className="fas fa-shopping-bag text-blue-500 mr-1"></i>Capacidade da Entrega
                         </span>
-                        <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full font-bold">
-                          BETA
-                        </span>
+                        <span className="text-xs text-gray-500">Quantos pedidos o motoboy leva?</span>
                       </div>
-                      <p className="text-xs text-gray-600 leading-relaxed">
-                        Destaca pedidos próximos para otimizar rotas
-                      </p>
+                      <span className="text-sm font-black text-blue-700 bg-blue-100 px-2 py-1 rounded border border-blue-200">
+                        {settings.capacidadeEntrega} un.
+                      </span>
                     </div>
-                    <Switch
-                      checked={settings.agruparPorDistancia}
-                      onChange={() =>
-                        saveSettings({
-                          ...settings,
-                          agruparPorDistancia: !settings.agruparPorDistancia,
-                        })
-                      }
-                      ariaLabel="Ativar agrupamento de pedidos por distância geográfica"
+                    <input
+                      type="range" min="2" max="8" step="1"
+                      value={settings.capacidadeEntrega}
+                      onChange={(e) => saveSettings({ ...settings, capacidadeEntrega: parseInt(e.target.value) })}
+                      className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
+                      aria-label={`Capacidade: ${settings.capacidadeEntrega} pedidos`}
                     />
+                    <div className="flex justify-between text-xs text-gray-400 mt-2 font-medium">
+                      <span>2 (Mínimo)</span><span>8 (Mochila Cheia)</span>
+                    </div>
                   </div>
 
-                  {/* Controles do cluster (expandem quando agrupar está ativo) */}
-                  {settings.agruparPorDistancia && (
-                    <>
-                      {/* Raio de proximidade */}
-                      <div className="p-5 rounded-lg bg-white border-2 border-blue-200">
-                        <div className="flex justify-between items-center mb-3">
-                          <div>
-                            <span className="text-sm font-bold text-gray-900 block">
-                              Raio de Proximidade
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              Até quantos km considera próximo?
-                            </span>
-                          </div>
-                          <span className="text-lg font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-lg border-2 border-blue-300">
-                            {settings.raioCluster}km
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.5"
-                          max="10"
-                          step="0.5"
-                          value={settings.raioCluster}
-                          onChange={(e) =>
-                            saveSettings({
-                              ...settings,
-                              raioCluster: parseFloat(e.target.value),
-                            })
-                          }
-                          className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
-                          aria-label={`Raio de proximidade: ${settings.raioCluster} quilômetros`}
-                        />
-                        <div className="flex justify-between text-xs text-gray-500 mt-2 font-medium">
-                          <span>0.5km Restrito</span>
-                          <span>10km Amplo</span>
-                        </div>
+                  <div className="p-4 rounded-lg bg-white border-2 border-blue-100">
+                    <div className="flex justify-between items-center mb-3">
+                      <div>
+                        <span className="text-sm font-bold text-gray-900 block">
+                          <i className="fas fa-hourglass-half text-blue-500 mr-1"></i>Janela de Agrupamento
+                        </span>
+                        <span className="text-xs text-gray-500">Espera máx. do 1º pedido</span>
                       </div>
-
-                      {/* Capacidade da entrega */}
-                      <div className="p-4 rounded-lg bg-white border-2 border-blue-100">
-                        <div className="flex justify-between items-center mb-3">
-                          <div>
-                            <span className="text-sm font-bold text-gray-900 block">
-                              <i
-                                className="fas fa-shopping-bag text-blue-500 mr-1"
-                                aria-hidden="true"
-                              ></i>
-                              Capacidade da Entrega
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              Quantos pedidos o motoboy leva?
-                            </span>
-                          </div>
-                          <span className="text-sm font-black text-blue-700 bg-blue-100 px-2 py-1 rounded border border-blue-200">
-                            {settings.capacidadeEntrega} un.
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min="2"
-                          max="8"
-                          step="1"
-                          value={settings.capacidadeEntrega}
-                          onChange={(e) =>
-                            saveSettings({
-                              ...settings,
-                              capacidadeEntrega: parseInt(e.target.value),
-                            })
-                          }
-                          className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
-                          aria-label={`Capacidade de entrega: ${settings.capacidadeEntrega} pedidos por viagem`}
-                        />
-                        <div className="flex justify-between text-xs text-gray-400 mt-2 font-medium">
-                          <span>2 (Mínimo)</span>
-                          <span>8 (Mochila Cheia)</span>
-                        </div>
-                      </div>
-
-                      {/* Janela de agrupamento */}
-                      <div className="p-4 rounded-lg bg-white border-2 border-blue-100">
-                        <div className="flex justify-between items-center mb-3">
-                          <div>
-                            <span className="text-sm font-bold text-gray-900 block">
-                              <i
-                                className="fas fa-hourglass-half text-blue-500 mr-1"
-                                aria-hidden="true"
-                              ></i>
-                              Janela de Agrupamento
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              Espera máx. do 1º pedido
-                            </span>
-                          </div>
-                          <span className="text-sm font-black text-blue-700 bg-blue-100 px-2 py-1 rounded border border-blue-200">
-                            {settings.tempoJanela} min
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min="10"
-                          max="60"
-                          step="5"
-                          value={settings.tempoJanela}
-                          onChange={(e) =>
-                            saveSettings({
-                              ...settings,
-                              tempoJanela: parseInt(e.target.value),
-                            })
-                          }
-                          className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
-                          aria-label={`Janela de agrupamento: ${settings.tempoJanela} minutos`}
-                        />
-                        <div className="flex justify-between text-xs text-gray-400 mt-2 font-medium">
-                          <span>10min (Rápido)</span>
-                          <span>60min (Econômico)</span>
-                        </div>
-                        <p className="mt-2 text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-100">
-                          <i
-                            className="fas fa-exclamation-circle mr-1"
-                            aria-hidden="true"
-                          ></i>
-                          Pedidos antigos não esperarão mais que{' '}
-                          {settings.tempoJanela} min para sair, garantindo que
-                          a comida chegue quente.
-                        </p>
-                      </div>
-
-                      {/* Endereço do restaurante */}
-                      <div className="space-y-2">
-                        <label
-                          htmlFor="endereco-restaurante"
-                          className="text-sm font-bold text-gray-700 uppercase tracking-wider block"
-                        >
-                          Endereço do Restaurante
-                        </label>
-                        <input
-                          id="endereco-restaurante"
-                          type="text"
-                          value={settings.enderecoRestaurante}
-                          onChange={(e) =>
-                            saveSettings({
-                              ...settings,
-                              enderecoRestaurante: e.target.value,
-                            })
-                          }
-                          placeholder="Ex: Av. Paulista, 1578, São Paulo, SP"
-                          className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
-                        />
-                        <p className="text-xs text-gray-500">
-                          Usado como ponto de partida nas rotas
-                        </p>
-                      </div>
-
-                      {/* Info box */}
-                      <div className="p-4 rounded-lg bg-blue-50 border border-blue-200">
-                        <div className="flex items-start gap-3">
-                          <i
-                            className="fas fa-lightbulb text-blue-500 mt-0.5 text-lg"
-                            aria-hidden="true"
-                          ></i>
-                          <div className="text-sm text-blue-900">
-                            <p className="font-bold mb-2">Como funciona:</p>
-                            <ul className="space-y-1.5 text-xs leading-relaxed list-none p-0 m-0">
-                              <li className="flex items-start gap-2">
-                                <i
-                                  className="fas fa-check text-blue-500 mt-0.5 text-xs"
-                                  aria-hidden="true"
-                                ></i>
-                                <span>
-                                  Cada grupo recebe uma{' '}
-                                  <strong>cor única</strong>
-                                </span>
-                              </li>
-                              <li className="flex items-start gap-2">
-                                <i
-                                  className="fas fa-check text-blue-500 mt-0.5 text-xs"
-                                  aria-hidden="true"
-                                ></i>
-                                <span>
-                                  Veja a{' '}
-                                  <strong>distância exata</strong> entre pedidos
-                                </span>
-                              </li>
-                              <li className="flex items-start gap-2">
-                                <i
-                                  className="fas fa-check text-blue-500 mt-0.5 text-xs"
-                                  aria-hidden="true"
-                                ></i>
-                                <span>
-                                  Clique em{' '}
-                                  <strong>"Criar Rota"</strong> para abrir no
-                                  Google Maps
-                                </span>
-                              </li>
-                            </ul>
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </section>
-
-              {/* Sobre + Logout */}
-              <div className="pt-6 border-t border-gray-200">
-                <div className="p-6 rounded-xl bg-gray-50 border border-gray-200">
-                  <div className="text-center mb-4">
-                    <div className="w-16 h-16 mx-auto mb-3 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-md">
-                      <i
-                        className="fas fa-bolt text-2xl text-white"
-                        aria-hidden="true"
-                      ></i>
-                    </div>
-                    <h4 className="font-bold text-gray-900 text-lg mb-1">
-                      NEX
-                      <i className="fas fa-bolt" aria-hidden="true"></i>
-                      FOOD
-                    </h4>
-                    <p className="text-sm text-gray-500">by Nadin Garcia</p>
-                  </div>
-
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
-                      <span className="text-gray-600">Licença:</span>
-                      <span className="text-emerald-600 font-bold">NEX07</span>
-                    </div>
-                    <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
-                      <span className="text-gray-600">CNPJ:</span>
-                      <span className="text-gray-900 font-medium">
-                        63.805.056/0001-33
+                      <span className="text-sm font-black text-blue-700 bg-blue-100 px-2 py-1 rounded border border-blue-200">
+                        {settings.tempoJanela} min
                       </span>
                     </div>
-                    <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
-                      <span className="text-gray-600">Pedidos Hoje:</span>
-                      <span className="text-gray-900 font-bold">
-                        {pedidos.length}
-                      </span>
+                    <input
+                      type="range" min="10" max="60" step="5"
+                      value={settings.tempoJanela}
+                      onChange={(e) => saveSettings({ ...settings, tempoJanela: parseInt(e.target.value) })}
+                      className="w-full h-2 bg-gradient-to-r from-blue-200 to-blue-400 rounded-lg appearance-none cursor-pointer slider-blue"
+                      aria-label={`Janela: ${settings.tempoJanela} minutos`}
+                    />
+                    <div className="flex justify-between text-xs text-gray-400 mt-2 font-medium">
+                      <span>10min (Rápido)</span><span>60min (Econômico)</span>
                     </div>
+                    <p className="mt-2 text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-100">
+                      <i className="fas fa-exclamation-circle mr-1"></i>
+                      Pedidos antigos não esperarão mais que {settings.tempoJanela} min para sair.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="endereco-restaurante" className="text-sm font-bold text-gray-700 uppercase tracking-wider block">
+                      Endereço do Restaurante
+                    </label>
+                    <input
+                      id="endereco-restaurante"
+                      type="text"
+                      value={settings.enderecoRestaurante}
+                      onChange={(e) => saveSettings({ ...settings, enderecoRestaurante: e.target.value })}
+                      placeholder="Ex: Av. Paulista, 1578, São Paulo, SP"
+                      className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
+                    />
+                    <p className="text-xs text-gray-500">Usado como ponto de partida nas rotas</p>
+                  </div>
+                </>
+              )}
+            </AccordionSection>
+
+            {/* ── Sobre + Logout ────────────────────────────────────────── */}
+            <AccordionSection id="acc-sobre" icon="info-circle" title="Sobre" defaultOpen={true}>
+              <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
+                <div className="text-center mb-4">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-md">
+                    <i className="fas fa-bolt text-2xl text-white" aria-hidden="true"></i>
+                  </div>
+                  <h4 className="font-bold text-gray-900 text-lg mb-1">
+                    NEX<i className="fas fa-bolt" aria-hidden="true"></i>FOOD
+                  </h4>
+                  <p className="text-sm text-gray-500">by Nadin Garcia</p>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
+                    <span className="text-gray-600">Licença:</span>
+                    <span className="text-emerald-600 font-bold">NEX07</span>
+                  </div>
+                  <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
+                    <span className="text-gray-600">CNPJ:</span>
+                    <span className="text-gray-900 font-medium">63.805.056/0001-33</span>
+                  </div>
+                  <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
+                    <span className="text-gray-600">Pedidos Hoje:</span>
+                    <span className="text-gray-900 font-bold">{pedidos.length}</span>
                   </div>
                 </div>
-
-                <button
-                  onClick={() => {
-                    ;[
-                      'nexfood_token',
-                      'nexfood_user',
-                      'nexfood_refresh_token',
-                    ].forEach((k) => localStorage.removeItem(k))
-                    sessionStorage.removeItem('nexfood_token')
-                    sessionStorage.removeItem('nexfood_refresh_token')
-                    sessionStorage.removeItem('nexfood_user')
-                    navigate('/login')
-                  }}
-                  className="mt-6 w-full py-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 font-bold transition-all uppercase tracking-wider text-sm"
-                >
-                  <i
-                    className="fas fa-sign-out-alt mr-2"
-                    aria-hidden="true"
-                  ></i>
-                  Encerrar Sessão
-                </button>
               </div>
-            </div>
+
+              <button
+                onClick={() => {
+                  ['nexfood_token', 'nexfood_user', 'nexfood_refresh_token'].forEach((k) => localStorage.removeItem(k))
+                  sessionStorage.removeItem('nexfood_token')
+                  sessionStorage.removeItem('nexfood_refresh_token')
+                  sessionStorage.removeItem('nexfood_user')
+                  navigate('/login')
+                }}
+                className="w-full py-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 font-bold transition-all uppercase tracking-wider text-sm"
+              >
+                <i className="fas fa-sign-out-alt mr-2" aria-hidden="true"></i>
+                Encerrar Sessão
+              </button>
+            </AccordionSection>
+
+          </div>
           </aside>
         </div>
 
@@ -3317,6 +3161,37 @@ function ElectronBanner() {
           </p>
         </div>
       </div>
+    </div>
+  )
+}
+
+function AccordionSection({ id, icon, title, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return (
+    <div className="rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3.5 bg-gray-50 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#7f22fe]/30"
+        aria-expanded={open}
+        aria-controls={id}
+      >
+        <span className="flex items-center gap-2 text-sm font-bold text-gray-600 uppercase tracking-wider">
+          <i className={`fas fa-${icon} text-gray-400`} aria-hidden="true"></i>
+          {title}
+        </span>
+        <i
+          className={`fas fa-chevron-down text-gray-400 text-xs transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          aria-hidden="true"
+        />
+      </button>
+
+      {open && (
+        <div id={id} className="p-4 space-y-4 bg-white border-t border-gray-100">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
