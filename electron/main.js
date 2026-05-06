@@ -41,7 +41,8 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.cjs')
+      preload: path.join(__dirname, 'preload.cjs'),
+      backgroundThrottling: false,
     },
     backgroundColor: '#0f172a',
     show: false,
@@ -293,6 +294,11 @@ ipcMain.handle('send-notification', async (event, { title, body }) => {
     return { success: false, error: error.message }
   }
 })
+
+// Cole logo antes de: app.whenReady().then(createWindow)
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 
 app.whenReady().then(createWindow)
 
