@@ -369,6 +369,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
         <div class="divider-bold"></div>
 
         <div class="totals-row"><span>Subtotal</span><span>${formatCurrency(pedido.subtotal)}</span></div>
+        ${pedido.taxaEntrega > 0 ? `<div class="totals-row"><span>Taxa Entrega</span><span>${formatCurrency(pedido.taxaEntrega)}</span></div>` : ''}
         ${pedido.desconto > 0 ? `<div class="totals-row"><span>Desconto</span><span>- ${formatCurrency(pedido.desconto)}</span></div>` : ''}
         <div class="totals-row total-big"><span>TOTAL</span><span>${formatCurrency(pedido.total)}</span></div>
 
@@ -2907,6 +2908,16 @@ function OrderModal({
                     {formatCurrency(currentPedido.subtotal)}
                   </span>
                 </div>
+                {/* ← linha nova */}
+                {currentPedido.taxaEntrega > 0 && (
+                  <div className="flex justify-between text-gray-700">
+                    <span className="flex items-center gap-1.5">
+                      <i className="fas fa-motorcycle text-gray-400 text-xs" aria-hidden="true"></i>
+                      Taxa de Entrega
+                    </span>
+                    <span className="font-semibold">{formatCurrency(currentPedido.taxaEntrega)}</span>
+                  </div>
+                )}
                 {currentPedido.desconto > 0 && (
                   <div className="flex justify-between text-emerald-700">
                     <span>Desconto</span>
