@@ -394,6 +394,59 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ETIQUETA DE SACOLA — cupom minimalista com número do pedido em destaque
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConfig = {}) => {
+  const { nome: nomeRestaurante = 'Restaurante' } = restaurantConfig
+  const orderNum = getOrderNumber(pedido)
+  const clienteNome = pedido.cliente?.nome || 'Consumidor'
+
+  const enderecoHtml =
+    pedido.tipo === 'Delivery' && pedido.enderecoEntrega
+      ? `<div class="address">${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}</div>
+         <div class="address-sub">${pedido.enderecoEntrega.bairro}${pedido.enderecoEntrega.cidade ? ` — ${pedido.enderecoEntrega.cidade}` : ''}</div>`
+      : `<div class="address">★ RETIRADA NO BALCÃO ★</div>`
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page { margin: 0; size: 72mm auto; }
+    html, body { height: auto !important; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      width: 70mm; margin: 0; padding: 6px;
+      color: #000; display: inline-block;
+    }
+    .restaurant { font-size: 10px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+    .divider    { border-top: 2px dashed #000; margin: 6px 0; }
+    .order-num  { font-size: 52px; font-weight: 900; text-align: center; line-height: 1; margin: 4px 0; letter-spacing: -2px; }
+    .bag-tag    { font-size: 16px; font-weight: 900; text-align: center; background: #000; color: #fff; padding: 5px 0; border-radius: 4px; margin: 6px 0; letter-spacing: 1px; }
+    .label      { font-size: 9px; font-weight: 900; text-transform: uppercase; }
+    .client     { font-size: 15px; font-weight: 900; }
+    .address    { font-size: 11px; font-weight: 700; }
+    .address-sub{ font-size: 10px; }
+    .footer     { font-size: 9px; text-align: center; border-top: 1px dashed #000; padding-top: 4px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="restaurant">${nomeRestaurante}</div>
+  <div class="divider"></div>
+  <div class="order-num">#${orderNum}</div>
+  <div class="bag-tag">SACOLA ${sacola} DE ${totalSacolas}</div>
+  <div class="divider"></div>
+  <div class="label">Cliente</div>
+  <div class="client">${clienteNome}</div>
+  ${enderecoHtml}
+  <div class="footer">NexFood • NEX07</div>
+</body>
+</html>`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL — OrderManager
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -410,6 +463,7 @@ export default function OrderManager() {
   const [isFullScreen, setIsFullScreen] = useState(false)
   const [finishedColumnCollapsed, setFinishedColumnCollapsed] = useState(false)
   const [visibleClusters, setVisibleClusters] = useState([])
+  const [bagLabelTarget, setBagLabelTarget] = useState(null) // ← NOVO
 
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -487,6 +541,7 @@ export default function OrderManager() {
       localStorage.getItem('chamarEntregadorAuto') !== 'false',
     fonteTamanho: parseInt(localStorage.getItem('fonteTamanho')) || 12,  // ← faltava
     negritar: localStorage.getItem('negritar') === 'true',
+    usarEtiquetasSacola: localStorage.getItem('usarEtiquetasSacola') === 'true',
   })
 
   /**
@@ -610,6 +665,39 @@ export default function OrderManager() {
     },
     [restaurantConfig]
   )
+
+  // ── Impressão de etiquetas de sacola ──────────────────────────────────────
+const handlePrintBagLabels = useCallback(
+  async (pedido, totalSacolas) => {
+    for (let i = 1; i <= totalSacolas; i++) {
+      const html = renderEtiquetaSacolaToHTML(pedido, i, totalSacolas, restaurantConfig)
+
+      if (electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica) {
+        await electronAPI.printOrder(settingsRef.current.impressoraAutomatica, html)
+      } else {
+        const w = window.open('', '_blank', 'width=380,height=500')
+        if (!w) { alert('Pop-up bloqueado! Permita pop-ups para este site.'); break }
+        w.document.open()
+        w.document.write(html)
+        w.document.close()
+        w.onload = () => {
+          setTimeout(() => { w.focus(); w.print(); w.onafterprint = () => w.close() }, 200)
+        }
+        setTimeout(() => { if (!w.closed) { w.focus(); w.print() } }, 1500)
+      }
+
+      // Pausa entre janelas para não sobrecarregar o spooler
+      if (i < totalSacolas) await new Promise((r) => setTimeout(r, 350))
+    }
+
+    setBagLabelTarget(null)
+    addToast(
+      `🏷️ ${totalSacolas} etiqueta${totalSacolas > 1 ? 's' : ''} enviada${totalSacolas > 1 ? 's' : ''} para impressão!`,
+      'success'
+    )
+  },
+  [restaurantConfig, addToast]
+)
 
   // ── Box Delivery: chama entregador na transportadora ─────────────────────
   const callBoxDelivery = useCallback(
@@ -1678,6 +1766,17 @@ export default function OrderManager() {
                     <i className="fas fa-print text-gray-400" aria-hidden="true"></i>
                     Imprimir cupom de teste
                   </button>
+                  <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
+                    <div>
+                      <p className="text-sm text-gray-900 font-medium">Etiquetas de Sacola</p>
+                      <p className="text-xs text-gray-500">Exibe botão para imprimir etiquetas por sacola</p>
+                    </div>
+                    <Switch
+                      checked={settings.usarEtiquetasSacola}
+                      onChange={() => saveSettings({ ...settings, usarEtiquetasSacola: !settings.usarEtiquetasSacola })}
+                      ariaLabel="Ativar etiquetas de sacola"
+                    />
+                  </div>
                 </div>
               </div>
             </AccordionSection>
@@ -1906,6 +2005,8 @@ export default function OrderManager() {
             onClose={() => setSelectedOrder(null)}
             onPrint={() => handlePrint(selectedOrder)}
             onAdvance={() => advanceStatus(selectedOrder)}
+            onPrintBagLabels={(pedido) => setBagLabelTarget(pedido)}
+            showBagLabels={settings.usarEtiquetasSacola}
             isLoading={loadingOrderId === selectedOrder._id}
             pedidos={pedidosComClusters}
             onNavigate={setSelectedOrder}
@@ -1914,7 +2015,16 @@ export default function OrderManager() {
         )}
 
         {/* Sistema de toasts */}
-        <ToastContainer toasts={toasts} />
+         <ToastContainer toasts={toasts} />
+
+        {/* Modal de quantidade de sacolas */}
+        {bagLabelTarget && (
+          <BagCountModal
+            pedido={bagLabelTarget}
+            onConfirm={(count) => handlePrintBagLabels(bagLabelTarget, count)}
+            onClose={() => setBagLabelTarget(null)}
+          />
+        )}
 
         {/* Cards flutuantes de clusters fixados */}
         {uniqueClusters
@@ -2539,11 +2649,13 @@ function OrderModal({
   onClose,
   onPrint,
   onAdvance,
+  onPrintBagLabels,
+  showBagLabels,
   isLoading,
   pedidos,
   onNavigate,
   restaurantAddress,
-}) {
+}) {  
   const [currentPedido, setCurrentPedido] = useState(pedido)
 
   // Focus trap com suporte a fechar via Escape
@@ -2967,27 +3079,65 @@ function OrderModal({
         </div>
 
         {/* Footer com ações */}
-        <div className="bg-gray-50 p-6 border-t flex gap-4">
-          <button
-            onClick={() => onPrint(currentPedido)}
-            className="flex-1 py-4 rounded-lg bg-white hover:bg-gray-100 border-2 border-gray-300 font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
-            type="button"
-          >
-            <i className="fas fa-print mr-2" aria-hidden="true"></i>Imprimir
-          </button>
-          {currentPedido.status !== 'Entregue' && (
-            <button
-              onClick={() => { onAdvance(currentPedido); onClose() }}
-              disabled={isLoading}
-              className={`flex-[2] py-4 rounded-lg font-bold text-white transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#7f22fe] hover:bg-[#6b1de0]'}`}
-              type="button"
-              aria-label={isLoading ? 'Avançando...' : `Avançar para ${getNextStatus(currentPedido.status) || 'próxima etapa'}`}
-            >
-              {isLoading
-                ? <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
-                : <><i className="fas fa-arrow-right mr-2" aria-hidden="true"></i>Avançar Etapa</>
-              }
-            </button>
+        <div className="bg-gray-50 p-6 border-t">
+          {showBagLabels ? (
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => onPrint(currentPedido)}
+                  className="flex-1 py-3.5 rounded-lg bg-white hover:bg-gray-100 border-2 border-gray-300 font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+                  type="button"
+                >
+                  <i className="fas fa-print mr-2" aria-hidden="true"></i>Imprimir
+                </button>
+                <button
+                  onClick={() => onPrintBagLabels(currentPedido)}
+                  className="flex-1 py-3.5 rounded-lg bg-white hover:bg-purple-50 border-2 border-[#7f22fe]/40 hover:border-[#7f22fe] text-[#7f22fe] font-bold transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
+                  type="button"
+                  title="Imprimir etiquetas identificadoras para cada sacola do pedido"
+                >
+                  <i className="fas fa-shopping-bag mr-2" aria-hidden="true"></i>Sacolas
+                </button>
+              </div>
+              {currentPedido.status !== 'Entregue' && (
+                <button
+                  onClick={() => { onAdvance(currentPedido); onClose() }}
+                  disabled={isLoading}
+                  className={`w-full py-4 rounded-lg font-bold text-white transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#7f22fe] hover:bg-[#6b1de0]'}`}
+                  type="button"
+                  aria-label={isLoading ? 'Avançando...' : `Avançar para ${getNextStatus(currentPedido.status) || 'próxima etapa'}`}
+                >
+                  {isLoading
+                    ? <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
+                    : <><i className="fas fa-arrow-right mr-2" aria-hidden="true"></i>Avançar Etapa</>
+                  }
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <button
+                onClick={() => onPrint(currentPedido)}
+                className="flex-1 py-4 rounded-lg bg-white hover:bg-gray-100 border-2 border-gray-300 font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+                type="button"
+              >
+                <i className="fas fa-print mr-2" aria-hidden="true"></i>Imprimir
+              </button>
+              {currentPedido.status !== 'Entregue' && (
+                <button
+                  onClick={() => { onAdvance(currentPedido); onClose() }}
+                  disabled={isLoading}
+                  className={`flex-[2] py-4 rounded-lg font-bold text-white transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#7f22fe] hover:bg-[#6b1de0]'}`}
+                  type="button"
+                  aria-label={isLoading ? 'Avançando...' : `Avançar para ${getNextStatus(currentPedido.status) || 'próxima etapa'}`}
+                >
+                  {isLoading
+                    ? <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
+                    : <><i className="fas fa-arrow-right mr-2" aria-hidden="true"></i>Avançar Etapa</>
+                  }
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -3203,6 +3353,138 @@ function AccordionSection({ id, icon, title, defaultOpen = false, children }) {
           {children}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BagCountModal — seletor de quantidade de sacolas para impressão de etiquetas
+// ─────────────────────────────────────────────────────────────────────────────
+
+function BagCountModal({ pedido, onConfirm, onClose }) {
+  const [count, setCount] = useState(2)
+  const trapRef = useFocusTrap(true, onClose)
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+
+      <div
+        ref={trapRef}
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bag-modal-title"
+      >
+        {/* Header */}
+        <div className="bg-[#7f22fe] px-5 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3 text-white">
+            <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center">
+              <i className="fas fa-shopping-bag text-white" aria-hidden="true"></i>
+            </div>
+            <div>
+              <h3 id="bag-modal-title" className="font-bold text-base leading-tight">
+                Etiquetas de Sacola
+              </h3>
+              <p className="text-purple-200 text-xs">Pedido #{getOrderNumber(pedido)}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-white/70 hover:text-white transition-colors focus:outline-none"
+            aria-label="Fechar"
+            type="button"
+          >
+            <i className="fas fa-times" aria-hidden="true"></i>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-5">
+          <p className="text-sm text-gray-500 text-center leading-relaxed">
+            Quantas sacolas neste pedido?<br />
+            <span className="text-xs text-gray-400">Uma etiqueta impressa por sacola</span>
+          </p>
+
+          {/* Contador grande */}
+          <div className="flex items-center justify-center gap-5">
+            <button
+              onClick={() => setCount((c) => Math.max(1, c - 1))}
+              className="w-12 h-12 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-black text-2xl transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+              aria-label="Diminuir"
+              type="button"
+            >−</button>
+
+            <div className="flex flex-col items-center w-20">
+              <span className="text-6xl font-black text-gray-900 leading-none tabular-nums">
+                {count}
+              </span>
+              <span className="text-xs text-gray-400 mt-1">
+                {count === 1 ? 'sacola' : 'sacolas'}
+              </span>
+            </div>
+
+            <button
+              onClick={() => setCount((c) => Math.min(10, c + 1))}
+              className="w-12 h-12 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-black text-2xl transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+              aria-label="Aumentar"
+              type="button"
+            >+</button>
+          </div>
+
+          {/* Atalhos rápidos */}
+          <div className="grid grid-cols-5 gap-2">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => setCount(n)}
+                type="button"
+                className={`py-2.5 rounded-xl text-sm font-bold transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
+                  count === n
+                    ? 'bg-[#7f22fe] text-white shadow-md scale-105'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+                aria-pressed={count === n}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+
+          {/* Info contextual */}
+          <div className={`p-3 rounded-xl text-xs flex items-start gap-2 transition-all ${
+            count > 1
+              ? 'bg-purple-50 border border-purple-100 text-purple-700'
+              : 'bg-gray-50 border border-gray-200 text-gray-500'
+          }`}>
+            <i className="fas fa-tag mt-0.5 shrink-0" aria-hidden="true"></i>
+            <span>
+              {count === 1
+                ? 'Será impressa 1 etiqueta com o número do pedido em destaque.'
+                : `Serão impressas ${count} etiquetas — cada uma mostra o número do pedido e a identificação da sacola (ex: SACOLA 2 DE ${count}).`}
+            </span>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 pb-6 flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+            type="button"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => onConfirm(count)}
+            className="flex-[2] py-3 rounded-xl bg-[#7f22fe] hover:bg-[#6b1de0] text-white font-bold transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 flex items-center justify-center gap-2"
+            type="button"
+          >
+            <i className="fas fa-print" aria-hidden="true"></i>
+            Imprimir {count} {count === 1 ? 'Etiqueta' : 'Etiquetas'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

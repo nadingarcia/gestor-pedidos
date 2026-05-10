@@ -23,7 +23,7 @@ const STATUS_MAP = {
  * @param {Object} pedido  - objeto completo do pedido
  * @param {string} novoStatus - status em português (ex: 'Em preparação')
  */
-export async function notifyOrderStatus(pedido, novoStatus, botStatus = 'online') {
+export async function notifyOrderStatus(pedido, novoStatus, botStatus = 'offline') {
   try {
     // 🛑 A SUA IDEIA AQUI: Se o bot não estiver online, aborta antes de gastar rede!
     if (botStatus !== 'online') {
@@ -48,7 +48,7 @@ export async function notifyOrderStatus(pedido, novoStatus, botStatus = 'online'
       body: JSON.stringify({
         telefoneCliente: telefone,
         nomeCliente:     pedido?.cliente?.nome || pedido?.cliente?.name || '',
-        numeroPedido:    pedido.numeroPedido   || pedido._id?.slice(-6).toUpperCase(),
+        numeroPedido:    pedido.numeroPedido   || pedido._id?.slice(-4).toUpperCase(),
         status:          statusBackend,
         tipoEntrega:     pedido?.tipoEntrega   || 'DELIVERY',
       }),

@@ -134,7 +134,7 @@ export function useOrderClustering(
           .filter(o => o._id !== order._id)
           .map(o => ({
             orderId: o._id,
-            orderNumber: o._id.slice(-4).toUpperCase(),
+            orderNumber: o.numeroPedido || o._id.slice(-4).toUpperCase(),
             address: `${o.enderecoEntrega.rua}, ${o.enderecoEntrega.numero}`,
             distance: getDistance(
               parseFloat(order.enderecoEntrega.latitude),
