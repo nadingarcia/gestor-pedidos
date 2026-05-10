@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onKitchenOrders: (cb) => ipcRenderer.on('kitchen-orders', (_, orders) => cb(orders)),
   offKitchenOrders: () => ipcRenderer.removeAllListeners('kitchen-orders'),
   onKitchenReady: (cb) => ipcRenderer.on('kitchen-ready', () => cb()),
+  offKitchenReady: () => ipcRenderer.removeAllListeners('kitchen-ready'),
 
   // Notificações
   sendNotification: (title, body) => ipcRenderer.invoke('send-notification', { title, body }),

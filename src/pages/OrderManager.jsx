@@ -37,6 +37,39 @@ const notificationAudio = new Audio(
 notificationAudio.preload = 'auto'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CACHE LOCAL DE PEDIDOS
+// Elimina a tela em branco no mount e mantém operação durante quedas de API.
+// Dados com mais de 8h são descartados — evita exibir pedidos de ontem.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CACHE_KEY = 'nexfood_pedidos_cache'
+const CACHE_MAX_AGE_MS = 8 * 60 * 60 * 1000 // 8 horas
+
+const readPedidosCache = () => {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    if (!raw) return null
+    const { timestamp, data } = JSON.parse(raw)
+    if (Date.now() - timestamp > CACHE_MAX_AGE_MS) {
+      localStorage.removeItem(CACHE_KEY)
+      return null
+    }
+    return data
+  } catch {
+    return null
+  }
+}
+
+const writePedidosCache = (data) => {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      data,
+    }))
+  } catch {} // quota exceeded — silencioso
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // UTILITÁRIOS DE FORMATAÇÃO
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -185,6 +218,30 @@ function useFocusTrap(isActive, onEscape) {
   }, [isActive, onEscape])
 
   return containerRef
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOOK: useOnlineStatus
+// Monitora conexão via eventos nativos do browser.
+// Quando volta online, dispara callback opcional (ex: refetch automático).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function useOnlineStatus() {
+  const [isOnline, setIsOnline] = useState(navigator.onLine)
+  const wasOffline = useRef(false)
+
+  useEffect(() => {
+    const handleOnline  = () => { setIsOnline(true);  wasOffline.current = false }
+    const handleOffline = () => { setIsOnline(false); wasOffline.current = true  }
+    window.addEventListener('online',  handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online',  handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  return { isOnline, wasOffline }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -463,7 +520,8 @@ export default function OrderManager() {
   const [isFullScreen, setIsFullScreen] = useState(false)
   const [finishedColumnCollapsed, setFinishedColumnCollapsed] = useState(false)
   const [visibleClusters, setVisibleClusters] = useState([])
-  const [bagLabelTarget, setBagLabelTarget] = useState(null) // ← NOVO
+  const [bagLabelTarget, setBagLabelTarget] = useState(null)
+  const [isFromCache, setIsFromCache] = useState(false)
 
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -517,6 +575,7 @@ export default function OrderManager() {
   const navigate = useNavigate()
   const nexBotStatus = useNexBotStatus()
   const restaurantConfig = useRestaurantConfig()
+  const { isOnline, wasOffline } = useOnlineStatus()
 
   // ── Configurações — inicializadas do localStorage de forma síncrona ───────
   const [settings, setSettings] = useState({
@@ -543,6 +602,19 @@ export default function OrderManager() {
     negritar: localStorage.getItem('negritar') === 'true',
     usarEtiquetasSacola: localStorage.getItem('usarEtiquetasSacola') === 'true',
   })
+
+  // ── Hidratação do cache — executa uma única vez no mount ──────────────────
+// Popula os pedidos instantaneamente antes do primeiro fetch terminar.
+// O skeleton nunca aparece se houver cache válido.
+useEffect(() => {
+  const cache = readPedidosCache()
+  if (!cache) return
+  setPedidos(cache.pedidosConfirmados)
+  setPedidosPendentes(cache.aguardandoPagamento)
+  setPedidosRecusados(cache.pagamentosRecusados)
+  setLoading(false)
+  setIsFromCache(true)
+}, [])
 
   /**
    * settingsRef — espelho mutable das settings.
@@ -591,6 +663,7 @@ export default function OrderManager() {
       pedidos.filter(p => p.status === 'Em preparação')
     )
   })
+  return () => electronAPI.offKitchenReady()
 }, [pedidos])
 
   // ── Carregar impressoras disponíveis (Electron only) ──────────────────────
@@ -809,6 +882,9 @@ const handlePrintBagLabels = useCallback(
       setPedidosPendentes(aguardandoPagamento)
       setPedidosRecusados(pagamentosRecusados)
 
+      writePedidosCache({ pedidosConfirmados, aguardandoPagamento, pagamentosRecusados })
+      setIsFromCache(false)
+
       if (aceitarAutomatico) {
         const novos = pedidosConfirmados.filter(
           (p) =>
@@ -859,6 +935,10 @@ const handlePrintBagLabels = useCallback(
       setLoading(false)
     }
   }, [playNotificationSound, sendPushNotification, handlePrint, callBoxDelivery])
+
+  useEffect(() => {
+  if (isOnline && wasOffline.current) fetchPedidos()
+}, [isOnline, fetchPedidos])
 
   // ── Intervalo de refresh ──────────────────────────────────────────────────
   //
@@ -1167,22 +1247,34 @@ const handlePrintBagLabels = useCallback(
                 <h1 className="text-xl font-bold text-gray-900 leading-tight">
                   Gestor de Pedidos
                 </h1>
-                <div className="flex items-center gap-2 text-sm">
+                <div className="flex items-center gap-2 text-sm" aria-live="polite">
+                {isOnline ? (
+                  <>
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" aria-hidden="true" />
+                    <span className="text-gray-500 font-medium">Loja Online</span>
+                    {lastUpdated && !isFromCache && (
+                      <span className="text-xs text-gray-400 hidden lg:inline">
+                        · Atualizado há {secondsSinceUpdate}s
+                      </span>
+                    )}
+                    {isFromCache && (
+                      <span className="text-xs text-amber-600 hidden lg:inline">
+                        · Sincronizando...
+                      </span>
+                    )}
+                  </>
+                ) : (
                   <span
-                    className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"
-                    aria-hidden="true"
-                  ></span>
-                  <span className="text-gray-500 font-medium">Loja Aberta</span>
-                  {lastUpdated && (
-                    <span
-                      className="text-xs text-gray-400 hidden lg:inline"
-                      aria-live="polite"
-                      aria-atomic="true"
-                    >
-                      · Atualizado há {secondsSinceUpdate}s
-                    </span>
-                  )}
-                </div>
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-full"
+                    title="Sem conexão com a internet. Exibindo últimos dados salvos."
+                    role="alert"
+                  >
+                    <i className="fas fa-wifi text-[10px]" aria-hidden="true" />
+                    Sem conexão
+                    {isFromCache && <span className="font-normal opacity-80">· modo cache</span>}
+                  </span>
+                )}
+              </div>
               </div>
             </div>
 

@@ -34,7 +34,11 @@ export const electronAPI = {
   onKitchenReady: (cb) => {
   if (!isElectron()) return
   window.electronAPI.onKitchenReady(cb)
-},
+  },
+  offKitchenReady: () => {
+    if (!isElectron()) return
+    window.electronAPI.offKitchenReady()
+  },
 
   sendNotification: (title, body) => safeInvoke(window.electronAPI.sendNotification, title, body),
   isElectron,
