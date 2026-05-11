@@ -51,6 +51,7 @@ export async function notifyOrderStatus(pedido, novoStatus, botStatus = 'offline
         numeroPedido:    pedido.numeroPedido   || pedido._id?.slice(-4).toUpperCase(),
         status:          statusBackend,
         tipoEntrega:     pedido?.tipoEntrega   || 'DELIVERY',
+        pedidoId:        pedido._id // <--- ADICIONE ESTA LINHA AQUI
       }),
     })
 
