@@ -316,8 +316,9 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
       const totalItem = item.precoUnitario * item.quantidade
       const nomeItem = item.nome.replace(/\s*\(padrão\)/gi, '').trim()
       const complementosHtml = item.complementos?.length
-        ? `<div class="complementos">+ ${item.complementos.join('<br/>+ ')}</div>`
-        : ''
+      ? `${item.quantidade > 1 ? '<div class="complementos-label">cada un.:</div>' : ''}
+        <div class="complementos">${item.complementos.map(c => `+ ${c}`).join('<br/>')}</div>`
+      : ''
       const obsHtml = item.obs
         ? `<div class="obs"><strong>OBS:</strong> ${item.obs}</div>`
         : ''
@@ -386,6 +387,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           .name         { font-weight: var(--fw-bold); flex: 1; font-size: var(--fs-base); word-break: break-word; color: #000; }
           .item-price   { font-weight: var(--fw-heavy); font-size: var(--fs-base); color: #000; text-align: right; white-space: nowrap; margin-left: 4px; min-width: 52px; }
           .complementos { margin-left: 27px; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; }
+          .complementos-label { margin-left: 27px; font-size: var(--fs-xs); font-weight: var(--fw-heavy); text-transform: uppercase; letter-spacing: 0.5px; color: #000; margin-bottom: 1px; }
           .obs          { margin-left: 27px; margin-top: 3px; font-weight: var(--fw-heavy); font-size: var(--fs-sm); border-left: 3px solid #000; padding-left: 4px; color: #000; }
           .totals-row   { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: var(--fs-base); font-weight: var(--fw-bold); color: #000; }
           .total-big    { font-size: var(--fs-total); font-weight: var(--fw-heavy); margin-top: 5px; color: #000; }
@@ -2984,9 +2986,17 @@ function OrderModal({
                       </p>
                     </div>
                     {item.complementos?.length > 0 && (
-                      <p className="text-sm text-gray-600">
-                        + {item.complementos.join(', ')}
-                      </p>
+                      <div className="mt-1 space-y-0.5">
+                        {item.quantidade > 1 && (
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">
+                            cada unidade:
+                          </p>
+                        )}
+
+                        <p className="text-sm text-gray-600">
+                          + {item.complementos.join(', ')}
+                        </p>
+                      </div>
                     )}
                     {item.obs && (
                       <div className="inline-flex items-center gap-2 text-sm bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-lg mt-2">
