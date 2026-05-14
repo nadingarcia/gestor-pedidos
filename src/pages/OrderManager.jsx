@@ -524,6 +524,9 @@ export default function OrderManager() {
   const [visibleClusters, setVisibleClusters] = useState([])
   const [bagLabelTarget, setBagLabelTarget] = useState(null)
   const [isFromCache, setIsFromCache] = useState(false)
+  const [showFaturamento, setShowFaturamento] = useState(
+    localStorage.getItem('showFaturamento') !== 'false'
+  )
 
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -1360,11 +1363,26 @@ const handlePrintBagLabels = useCallback(
 
               {/* Faturamento do dia */}
               <div className="hidden lg:flex flex-col items-end px-4 border-r border-gray-200 mr-2">
-                <span className="text-xs text-gray-500 uppercase tracking-wide font-semibold">
-                  Faturamento (Entregues)
-                </span>
-                <span className="text-xl font-bold text-emerald-600">
-                  {formatCurrency(totalDia)}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-500 uppercase tracking-wide font-semibold">
+                    Faturamento (Entregues)
+                  </span>
+                  <button
+                    onClick={() => {
+                      const next = !showFaturamento
+                      setShowFaturamento(next)
+                      localStorage.setItem('showFaturamento', String(next))
+                    }}
+                    className="text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
+                    aria-label={showFaturamento ? 'Ocultar faturamento' : 'Mostrar faturamento'}
+                    title={showFaturamento ? 'Ocultar' : 'Mostrar'}
+                    type="button"
+                  >
+                    <i className={`fas ${showFaturamento ? 'fa-eye' : 'fa-eye-slash'} text-xs`} aria-hidden="true" />
+                  </button>
+                </div>
+                <span className="text-xl font-bold text-emerald-600 tabular-nums tracking-wide">
+                  {showFaturamento ? formatCurrency(totalDia) : '•••••'}
                 </span>
               </div>
 
