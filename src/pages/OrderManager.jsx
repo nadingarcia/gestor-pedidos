@@ -527,6 +527,8 @@ export default function OrderManager() {
   const [showFaturamento, setShowFaturamento] = useState(
     localStorage.getItem('showFaturamento') !== 'false'
   )
+  const [motoboyModalTarget, setMotoboyModalTarget] = useState(null)
+  const [showSlugModal, setShowSlugModal] = useState(false)
 
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -603,6 +605,7 @@ export default function OrderManager() {
       parseInt(localStorage.getItem('capacidadeEntrega')) || 4,
     chamarEntregadorAuto:
       localStorage.getItem('chamarEntregadorAuto') !== 'false',
+    appEntregador: localStorage.getItem('appEntregador') === 'true',
     fonteTamanho: parseInt(localStorage.getItem('fonteTamanho')) || 12,  // ← faltava
     negritar: localStorage.getItem('negritar') === 'true',
     usarEtiquetasSacola: localStorage.getItem('usarEtiquetasSacola') === 'true',
@@ -972,13 +975,19 @@ const handlePrintBagLabels = useCallback(
       const nextStatus = getNextStatus(pedido.status)
       if (!nextStatus) return
 
-      setLoadingOrderId(pedido._id)
+      // ✅ Intercepta ANTES de qualquer chamada — modal gerencia o avanço
+      if (
+        nextStatus === 'Saiu para entrega' &&
+        settingsRef.current.appEntregador &&
+        pedido.tipo === 'Delivery'
+      ) {
+        setMotoboyModalTarget(pedido)
+        return
+      }
 
-      // Passo 1: Atualização otimista — UI instantânea
+      setLoadingOrderId(pedido._id)
       setPedidos((prev) =>
-        prev.map((p) =>
-          p._id === pedido._id ? { ...p, status: nextStatus } : p
-        )
+        prev.map((p) => p._id === pedido._id ? { ...p, status: nextStatus } : p)
       )
 
       try {
@@ -990,20 +999,12 @@ const handlePrintBagLabels = useCallback(
           if (pedido.tipo === 'Delivery') await callBoxDelivery(pedido)
         }
 
-        // Passo 2: Confirma com dados reais do servidor
         await fetchPedidos()
       } catch (err) {
-        console.error('Erro ao avançar status', err)
-        // Passo 3: Rollback — restaura status original
         setPedidos((prev) =>
-          prev.map((p) =>
-            p._id === pedido._id ? { ...p, status: pedido.status } : p
-          )
+          prev.map((p) => p._id === pedido._id ? { ...p, status: pedido.status } : p)
         )
-        addToast(
-          'Erro ao atualizar status. Verifique a conexão e tente novamente.',
-          'error'
-        )
+        addToast('Erro ao atualizar status. Verifique a conexão e tente novamente.', 'error')
       } finally {
         setLoadingOrderId(null)
       }
@@ -1954,6 +1955,47 @@ const handlePrintBagLabels = useCallback(
                 </div>
               )}
 
+              {/* ✅ App do Entregador — mutuamente exclusivo com Box Delivery */}
+              <div className={`flex items-center justify-between p-4 rounded-lg border-2 ${
+                settings.appEntregador
+                  ? 'bg-gradient-to-r from-purple-50 to-indigo-50 border-purple-300'
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <i className="fas fa-motorcycle text-purple-600 text-sm"></i>
+                    <span className="text-sm text-gray-900 font-bold">App do Entregador</span>
+                    {/* ✅ Só aviso, sem bloqueio */}
+                    {settings.appEntregador && boxDeliveryAtivo && (
+                      <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200">
+                        ⚠ Box Delivery ainda ativa
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600">Atribui pedidos manualmente aos seus motoboys</p>
+                </div>
+                <Switch
+                  checked={settings.appEntregador}
+                  onChange={() => {
+                    const novoEstado = !settings.appEntregador
+                    // ✅ Ao ativar, verifica se tem slug
+                    if (novoEstado) {
+                      const slug = localStorage.getItem('restauranteSlug')
+                      if (!slug) {
+                        setShowSlugModal(true)
+                        return
+                      }
+                    }
+                    if (novoEstado && settings.chamarEntregadorAuto) {
+                      saveSettings({ ...settings, appEntregador: true, chamarEntregadorAuto: false })
+                    } else {
+                      saveSettings({ ...settings, appEntregador: novoEstado })
+                    }
+                  }}
+                  ariaLabel="Ativar App do Entregador"
+                />
+              </div>
+
               <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-blue-50 to-cyan-50 border-2 border-blue-200">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
@@ -2071,7 +2113,7 @@ const handlePrintBagLabels = useCallback(
                     <i className="fas fa-bolt text-2xl text-white" aria-hidden="true"></i>
                   </div>
                   <h4 className="font-bold text-gray-900 text-lg mb-1">
-                    NEX<i className="fas fa-bolt" aria-hidden="true"></i>FOOD
+                    NEXFOOD
                   </h4>
                   <p className="text-sm text-gray-500">by Nadin Garcia</p>
                 </div>
@@ -2123,6 +2165,45 @@ const handlePrintBagLabels = useCallback(
             pedidos={pedidosComClusters}
             onNavigate={setSelectedOrder}
             restaurantAddress={settings.enderecoRestaurante}
+          />
+        )}
+
+        {/* Modal de seleção de motoboy */}
+        {motoboyModalTarget && (
+        <MotoboySelectorModal
+          pedido={motoboyModalTarget}
+          nexBotStatus={nexBotStatus}
+          onClose={() => setMotoboyModalTarget(null)}
+          onAtribuido={async () => {
+            // Motoboy atribuído com sucesso — avança e notifica com tracking
+            await apiUpdateStatus(motoboyModalTarget._id, 'Saiu para entrega')
+            notifyOrderStatus(
+              { ...motoboyModalTarget, temMotoboy: true },
+              'Saiu para entrega',
+              nexBotStatus
+            )
+            setMotoboyModalTarget(null)
+            fetchPedidos()
+          }}
+          onSkip={async () => {
+            // Sem motoboy — avança normalmente
+            await apiUpdateStatus(motoboyModalTarget._id, 'Saiu para entrega')
+            notifyOrderStatus(motoboyModalTarget, 'Saiu para entrega', nexBotStatus)
+            setMotoboyModalTarget(null)
+            fetchPedidos()
+          }}
+        />
+      )}
+
+        {showSlugModal && (
+          <SlugInputModal
+            onConfirm={(slug) => {
+              localStorage.setItem('restauranteSlug', slug)
+              setShowSlugModal(false)
+              saveSettings({ ...settings, appEntregador: true })
+              addToast('✅ Slug salvo! App do Entregador ativado.', 'success')
+            }}
+            onClose={() => setShowSlugModal(false)}
           />
         )}
 
@@ -2678,6 +2759,26 @@ function OrderCard({
               #{pedido.boxDelivery.uuid.slice(0, 6)}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Badge motoboy atribuído */}
+      {pedido.motoboyAtribuido && (
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-50 border border-purple-200">
+          <i className="fas fa-user-check text-purple-600 text-[9px]"></i>
+          <span className="text-[10px] font-bold text-purple-700">
+            Motoboy Atribuído
+          </span>
+          <a
+            href={`https://nexfood.app/tracking/${pedido._id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-[9px] text-purple-500 ml-auto underline"
+            title="Ver rastreamento"
+          >
+            Tracking
+          </a>
         </div>
       )}
 
@@ -3602,6 +3703,297 @@ function BagCountModal({ pedido, onConfirm, onClose }) {
           >
             <i className="fas fa-print" aria-hidden="true"></i>
             Imprimir {count} {count === 1 ? 'Etiqueta' : 'Etiquetas'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MotoboySelectorModal({ pedido, nexBotStatus, onClose, onAtribuido, onSkip }) {
+  const [motoboys, setMotoboys]   = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [atribuindo, setAtribuindo] = useState(null)
+  const [erro, setErro]           = useState(null)
+  const trapRef = useFocusTrap(true, onClose)
+
+  const slug = localStorage.getItem('restauranteSlug') || ''
+
+  useEffect(() => {
+    apiFetch(`https://painel.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
+      .then(r => r.json())
+      .then(data => {
+        setMotoboys(data.ativos?.filter(m => m.status === 'disponivel') || [])
+        setLoading(false)
+      })
+      .catch(() => { setErro('Erro ao buscar motoboys.'); setLoading(false) })
+  }, [])
+
+  const handleAtribuir = async (presenca) => {
+  setAtribuindo(presenca.presencaId)
+  try {
+    const res = await apiFetch('https://painel.nexfood.app/api/motoboy/atribuir-entrega', {
+      method: 'POST',
+      body: JSON.stringify({
+        motoboyId:       presenca.motoboy._id,
+        pedidoId:        pedido._id,
+        restauranteSlug: slug,
+      }),
+    })
+    if (!res.ok) throw new Error()
+    onAtribuido() // ✅ pai avança o status e notifica
+  } catch {
+    setErro('Falha ao atribuir. Tente novamente.')
+    setAtribuindo(null)
+  }
+}
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+
+      <div
+        ref={trapRef}
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="motoboy-modal-title"
+      >
+        {/* Header */}
+        <div className="bg-[#7f22fe] px-5 py-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 text-white">
+            <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center">
+              <i className="fas fa-motorcycle text-white"></i>
+            </div>
+            <div>
+              <h3 id="motoboy-modal-title" className="font-bold text-base leading-tight">
+                Atribuir Entregador
+              </h3>
+              <p className="text-purple-200 text-xs">Pedido #{getOrderNumber(pedido)}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-white/70 hover:text-white" type="button" aria-label="Fechar">
+            <i className="fas fa-times"></i>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+
+          {/* Endereço do pedido */}
+          {pedido.enderecoEntrega && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm">
+              <i className="fas fa-map-marker-alt text-blue-500 mt-0.5 shrink-0"></i>
+              <span className="text-blue-900 font-medium">
+                {pedido.enderecoEntrega.rua}, {pedido.enderecoEntrega.numero} · {pedido.enderecoEntrega.bairro}
+              </span>
+            </div>
+          )}
+
+          {loading && (
+            <div className="flex flex-col items-center py-10 text-gray-400 gap-3">
+              <i className="fas fa-spinner fa-spin text-2xl"></i>
+              <span className="text-sm">Buscando motoboys disponíveis...</span>
+            </div>
+          )}
+
+          {!loading && erro && (
+            <div className="text-center py-8 text-red-500 text-sm">
+              <i className="fas fa-exclamation-circle text-2xl mb-2 block"></i>
+              {erro}
+            </div>
+          )}
+
+          {!loading && !erro && motoboys.length === 0 && (
+            <div className="text-center py-10 space-y-2">
+              <i className="fas fa-user-slash text-3xl text-gray-300"></i>
+              <p className="text-sm font-bold text-gray-500">Nenhum motoboy disponível</p>
+              <p className="text-xs text-gray-400">Aguarde um entregador fazer check-in no app.</p>
+              <button
+                onClick={() => {
+                  setLoading(true)
+                  apiFetch(`https://painel.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
+                    .then(r => r.json())
+                    .then(d => { setMotoboys(d.ativos?.filter(m => m.status === 'disponivel') || []); setLoading(false) })
+                    .catch(() => setLoading(false))
+                }}
+                className="mt-2 text-xs text-[#7f22fe] underline"
+                type="button"
+              >
+                Atualizar lista
+              </button>
+            </div>
+          )}
+
+          {!loading && motoboys.map((presenca) => (
+            <button
+              key={presenca.presencaId}
+              onClick={() => handleAtribuir(presenca)}
+              disabled={!!atribuindo}
+              className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
+                atribuindo === presenca.presencaId
+                  ? 'bg-purple-50 border-[#7f22fe]'
+                  : 'bg-white border-gray-200 hover:border-[#7f22fe]/60 hover:bg-purple-50/30'
+              }`}
+              type="button"
+            >
+              {/* Avatar */}
+              <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#7f22fe] to-indigo-500 flex items-center justify-center text-white font-black text-lg shrink-0">
+                {presenca.motoboy.nome?.[0]?.toUpperCase() || '?'}
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-900 text-sm truncate">{presenca.motoboy.nome}</p>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span className="text-xs text-gray-500">
+                    <i className="fas fa-motorcycle text-gray-400 mr-1"></i>
+                    {presenca.motoboy.veiculo || 'moto'}
+                    {presenca.motoboy.placa ? ` · ${presenca.motoboy.placa}` : ''}
+                  </span>
+                  {presenca.motoboy.totalEntregas > 0 && (
+                    <span className="text-xs text-emerald-600 font-bold">
+                      ★ {presenca.motoboy.totalEntregas} entregas
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Ação */}
+              <div className="shrink-0">
+                {atribuindo === presenca.presencaId ? (
+                  <i className="fas fa-spinner fa-spin text-[#7f22fe]"></i>
+                ) : (
+                  <span className="text-xs font-black text-[#7f22fe] bg-purple-100 px-3 py-1.5 rounded-full border border-purple-200">
+                    Atribuir
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t bg-gray-50 shrink-0">
+          <button
+            onClick={onSkip}
+            className="w-full py-3 rounded-xl border-2 border-gray-200 text-gray-500 font-bold hover:bg-gray-100 transition-colors text-sm"
+            type="button"
+          >
+            <i className="fas fa-arrow-right mr-2"></i>
+            Enviar sem atribuir motoboy
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SlugInputModal({ onConfirm, onClose }) {
+  const [slug, setSlug] = useState('')
+  const [erro, setErro] = useState('')
+  const inputRef = useRef(null)
+
+  // Foca o input uma única vez ao montar — sem trap agressivo
+  useEffect(() => {
+    const timer = setTimeout(() => inputRef.current?.focus(), 50)
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Fecha com Escape
+  useEffect(() => {
+    const handleKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
+  const handleConfirm = () => {
+    const valor = slug.trim().toLowerCase()
+    if (!valor) { setErro('Informe o slug do restaurante.'); return }
+    if (/[^a-z0-9-]/.test(valor)) { setErro('Slug inválido — use apenas letras, números e hífens.'); return }
+    onConfirm(valor)
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+
+      <div
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="slug-modal-title"
+      >
+        {/* Header */}
+        <div className="bg-[#7f22fe] px-5 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3 text-white">
+            <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center">
+              <i className="fas fa-motorcycle"></i>
+            </div>
+            <div>
+              <h3 id="slug-modal-title" className="font-bold text-base leading-tight">
+                Configurar App do Entregador
+              </h3>
+              <p className="text-purple-200 text-xs">Identificação do restaurante</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-white/70 hover:text-white" type="button" aria-label="Fechar">
+            <i className="fas fa-times"></i>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-4">
+          <div className="flex items-start gap-3 p-4 rounded-xl bg-blue-50 border border-blue-200">
+            <i className="fas fa-info-circle text-blue-500 mt-0.5 shrink-0"></i>
+            <div className="text-sm text-blue-800 leading-relaxed">
+              <p className="font-bold mb-1">Onde encontrar o slug?</p>
+              <p>Acesse o <strong>Painel NexFood → seção Entregador</strong>. O código está exibido em destaque na tela.</p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="slug-input" className="text-sm font-bold text-gray-700 block">
+              Código do restaurante (slug)
+            </label>
+            <input
+              ref={inputRef}
+              id="slug-input"
+              type="text"
+              value={slug}
+              onChange={(e) => { setSlug(e.target.value.toLowerCase()); setErro('') }}
+              onKeyDown={(e) => e.key === 'Enter' && handleConfirm()}
+              placeholder="ex: pizzaria-marcos"
+              className={`w-full px-4 py-3 rounded-xl border-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/30 transition-all ${
+                erro ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-[#7f22fe]'
+              }`}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            {erro && (
+              <p className="text-xs text-red-600 flex items-center gap-1">
+                <i className="fas fa-exclamation-circle"></i> {erro}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 pb-6 flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors text-sm"
+            type="button"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!slug.trim()}
+            className="flex-[2] py-3 rounded-xl bg-[#7f22fe] hover:bg-[#6b1de0] disabled:bg-gray-300 text-white font-bold transition-all text-sm focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
+            type="button"
+          >
+            <i className="fas fa-check mr-2"></i>Salvar e Ativar
           </button>
         </div>
       </div>

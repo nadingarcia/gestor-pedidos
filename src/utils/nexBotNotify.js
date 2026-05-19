@@ -47,11 +47,12 @@ export async function notifyOrderStatus(pedido, novoStatus, botStatus = 'offline
       },
       body: JSON.stringify({
         telefoneCliente: telefone,
-        nomeCliente:     pedido?.cliente?.nome || pedido?.cliente?.name || '',
+        nomeCliente:     pedido?.cliente?.nome || '',
         numeroPedido:    pedido.numeroPedido   || pedido._id?.slice(-4).toUpperCase(),
         status:          statusBackend,
         tipoEntrega:     pedido?.tipoEntrega   || 'DELIVERY',
-        pedidoId:        pedido._id // <--- ADICIONE ESTA LINHA AQUI
+        pedidoId:        pedido._id,
+        temMotoboy:      pedido?.temMotoboy    || false, // ✅ true quando motoboy atribuído
       }),
     })
 
