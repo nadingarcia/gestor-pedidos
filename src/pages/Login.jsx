@@ -136,9 +136,15 @@ export default function Login() {
       if (data.token) storage.set('nexfood_token', data.token, remember)
       if (data.refreshToken) storage.set('nexfood_refresh_token', data.refreshToken, remember)
 
-        console.log('Dados de integrações recebidos no login:', data.integracoes)
+      if (data.slug) {
+          localStorage.setItem('restauranteSlug', data.slug)
+      }
 
-      if (data.integracoes) storage.set('nexfood_integracoes', data.integracoes, remember)
+      if (data.integracoes?.appEntregador?.ativo) {
+          localStorage.setItem('appEntregador', 'true')
+      } else {
+          localStorage.removeItem('appEntregador')
+      }
 
       if (endereco?.logradouro) {
         const enderecoFormatado = `${endereco.logradouro}, ${endereco.numero}, ${endereco.bairro}, ${endereco.cidade}, ${endereco.estado}`
