@@ -135,6 +135,7 @@ export default function Login() {
       storage.set('nexfood_user', data, remember)
       if (data.token) storage.set('nexfood_token', data.token, remember)
       if (data.refreshToken) storage.set('nexfood_refresh_token', data.refreshToken, remember)
+      if (data.integracoes) storage.set('nexfood_integracoes', data.integracoes, remember)
 
       if (data.slug) {
           localStorage.setItem('restauranteSlug', data.slug)

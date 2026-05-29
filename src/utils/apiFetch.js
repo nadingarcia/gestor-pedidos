@@ -43,7 +43,7 @@ function redirectToLogin() {
     localStorage.removeItem(STORAGE_REFRESH_TOKEN);
     sessionStorage.removeItem(STORAGE_TOKEN);
     sessionStorage.removeItem(STORAGE_REFRESH_TOKEN);
-    window.location.href = '/login';
+    window.location.href = '/#/login';
 }
 
 export async function apiFetch(url, options = {}) {
