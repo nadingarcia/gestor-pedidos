@@ -15,6 +15,14 @@ import { notifyOrderStatus } from '@utils/nexBotNotify'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch } from '../utils/apiFetch'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
+import {
+  TIPO_PEDIDO_BALCAO,
+  TIPO_PEDIDO_DELIVERY,
+  TIPO_PEDIDO_TODOS,
+  getTipoPedidoLabel,
+  isDelivery,
+  normalizeTipoPedido,
+} from '@utils/orderType'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLETONS DE MÓDULO
@@ -111,6 +119,22 @@ const getNextStatus = (currentStatus) => {
     'Saiu para entrega': 'Entregue',
   }
   return map[currentStatus] || null
+}
+
+const getApiErrorMessage = async (res, fallbackMessage) => {
+  try {
+    const contentType = res.headers.get('content-type') || ''
+
+    if (contentType.includes('application/json')) {
+      const data = await res.json()
+      return data?.message || data?.error || fallbackMessage
+    }
+
+    const text = await res.text()
+    return text || fallbackMessage
+  } catch {
+    return fallbackMessage
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,7 +438,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           ${pedido.cliente?.totalPedidos > 0 ? `<div class="fiel">★ Cliente Fiel (${pedido.cliente.totalPedidos}º pedido)</div>` : ''}
         </div>
 
-        ${pedido.tipo === 'Delivery' && pedido.enderecoEntrega ? `
+        ${isDelivery(pedido) && pedido.enderecoEntrega ? `
           <div class="info-group">
             <div class="info-label">Entrega</div>
             <div class="info-value">${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}</div>
@@ -462,7 +486,7 @@ export const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaur
   const clienteNome = pedido.cliente?.nome || 'Consumidor'
 
   const enderecoHtml =
-    pedido.tipo === 'Delivery' && pedido.enderecoEntrega
+    isDelivery(pedido) && pedido.enderecoEntrega
       ? `<div class="address">${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}</div>
          <div class="address-sub">${pedido.enderecoEntrega.bairro}${pedido.enderecoEntrega.cidade ? ` — ${pedido.enderecoEntrega.cidade}` : ''}</div>`
       : `<div class="address">★ RETIRADA NO BALCÃO ★</div>`
@@ -529,6 +553,13 @@ export default function OrderManager() {
   )
   const [motoboyModalTarget, setMotoboyModalTarget] = useState(null)
   const [showSlugModal, setShowSlugModal] = useState(false)
+  const [printFailure, setPrintFailure] = useState(null)
+  const [boxDeliveryFailure, setBoxDeliveryFailure] = useState(null)
+  const [motoboyAvailability, setMotoboyAvailability] = useState({
+    checked: false,
+    count: 0,
+    error: null,
+  })
 
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -537,7 +568,7 @@ export default function OrderManager() {
   // ── Busca e filtros ───────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
   const [filters, setFilters] = useState({
-    tipo: 'todos',
+    tipo: TIPO_PEDIDO_TODOS,
     pagamento: 'todos',
     valorMin: '',
     valorMax: '',
@@ -640,6 +671,47 @@ useEffect(() => {
     settingsRef.current = settings
   }, [settings])
 
+  useEffect(() => {
+    if (!settings.appEntregador) {
+      setMotoboyAvailability({ checked: false, count: 0, error: null })
+      return
+    }
+
+    const slug = localStorage.getItem('restauranteSlug') || ''
+    if (!slug) {
+      setMotoboyAvailability({ checked: true, count: 0, error: 'Slug do restaurante não configurado.' })
+      return
+    }
+
+    let cancelled = false
+
+    const fetchMotoboys = async () => {
+      try {
+        const res = await apiFetch(`https://painel.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
+        if (!res.ok) throw new Error('Falha ao consultar motoboys.')
+        const data = await res.json()
+        const count = data.ativos?.filter((m) => m.status === 'disponivel').length || 0
+        if (!cancelled) setMotoboyAvailability({ checked: true, count, error: null })
+      } catch (err) {
+        if (!cancelled) {
+          setMotoboyAvailability({
+            checked: true,
+            count: 0,
+            error: err?.message || 'Falha ao consultar motoboys.',
+          })
+        }
+      }
+    }
+
+    fetchMotoboys()
+    const interval = setInterval(fetchMotoboys, 30000)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [settings.appEntregador])
+
   // ── Timer "Atualizado há Xs" ───────────────────────────────────────────────
   useEffect(() => {
     if (!lastUpdated) return
@@ -721,6 +793,41 @@ useEffect(() => {
     }
   }, [])
 
+  const printWithFeedback = useCallback(
+    async (html) => {
+      const printerName = settingsRef.current.impressoraAutomatica
+
+      try {
+        const res = await electronAPI.printOrder(printerName, html)
+
+        if (res?.success) {
+          setPrintFailure(null)
+          return true
+        }
+
+        const errorMessage =
+          res?.error || 'Verifique se a impressora está ligada e instalada.'
+        setPrintFailure({ printerName, message: errorMessage, at: Date.now() })
+        addToast(
+          'Falha ao imprimir em "' + printerName + '": ' + errorMessage,
+          'error',
+          14000
+        )
+        return false
+      } catch (err) {
+        const errorMessage = err?.message || 'erro inesperado no spooler de impressão.'
+        setPrintFailure({ printerName, message: errorMessage, at: Date.now() })
+        addToast(
+          'Falha ao imprimir em "' + printerName + '": ' + errorMessage,
+          'error',
+          14000
+        )
+        return false
+      }
+    },
+    [addToast]
+  )
+
   // ── Impressão: restaurantConfig passado como parâmetro (sem getItem extra) ─
   const handlePrint = useCallback(
     async (pedido) => {
@@ -730,7 +837,7 @@ useEffect(() => {
       })
 
       if (electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica) {
-        await electronAPI.printOrder(settingsRef.current.impressoraAutomatica, html)
+        await printWithFeedback(html)
         return
       }
 
@@ -744,17 +851,20 @@ useEffect(() => {
       }
       setTimeout(() => { if (!w.closed) { w.focus(); w.print() } }, 1500)
     },
-    [restaurantConfig]
+    [restaurantConfig, printWithFeedback]
   )
 
   // ── Impressão de etiquetas de sacola ──────────────────────────────────────
 const handlePrintBagLabels = useCallback(
   async (pedido, totalSacolas) => {
+    let etiquetasEnviadas = 0
     for (let i = 1; i <= totalSacolas; i++) {
       const html = renderEtiquetaSacolaToHTML(pedido, i, totalSacolas, restaurantConfig)
 
       if (electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica) {
-        await electronAPI.printOrder(settingsRef.current.impressoraAutomatica, html)
+        const printed = await printWithFeedback(html)
+        if (!printed) break
+        etiquetasEnviadas++
       } else {
         const w = window.open('', '_blank', 'width=380,height=500')
         if (!w) { alert('Pop-up bloqueado! Permita pop-ups para este site.'); break }
@@ -764,27 +874,31 @@ const handlePrintBagLabels = useCallback(
         w.onload = () => {
           setTimeout(() => { w.focus(); w.print(); w.onafterprint = () => w.close() }, 200)
         }
+        etiquetasEnviadas++
         setTimeout(() => { if (!w.closed) { w.focus(); w.print() } }, 1500)
       }
 
       // Pausa entre janelas para não sobrecarregar o spooler
       if (i < totalSacolas) await new Promise((r) => setTimeout(r, 350))
     }
-
     setBagLabelTarget(null)
-    addToast(
-      `🏷️ ${totalSacolas} etiqueta${totalSacolas > 1 ? 's' : ''} enviada${totalSacolas > 1 ? 's' : ''} para impressão!`,
-      'success'
-    )
+    if (etiquetasEnviadas > 0) {
+      const plural = etiquetasEnviadas > 1 ? 's' : ''
+      addToast(
+        '🏷️ ' + etiquetasEnviadas + ' etiqueta' + plural +
+          ' enviada' + plural + ' para impressão!',
+        'success'
+      )
+    }
   },
-  [restaurantConfig, addToast]
+  [restaurantConfig, addToast, printWithFeedback]
 )
 
   // ── Box Delivery: chama entregador na transportadora ─────────────────────
   const callBoxDelivery = useCallback(
     async (pedido) => {
       if (!boxDeliveryAtivo || !settingsRef.current.chamarEntregadorAuto) return
-      if (pedido.tipo !== 'Delivery') return
+      if (!isDelivery(pedido)) return
 
       try {
         const boxRes = await apiFetch(
@@ -794,6 +908,7 @@ const handlePrintBagLabels = useCallback(
 
         if (boxRes.ok) {
           const data = await boxRes.json()
+          setBoxDeliveryFailure(null)
           addToast(
             `🛵 Entregador chamado! Ref: ${data.boxDelivery?.uuid?.slice(0, 8)}...`,
             'success'
@@ -806,24 +921,22 @@ const handlePrintBagLabels = useCallback(
 
           const isBalanceError =
             errData?.code === 'BALANCE_ERROR' || boxRes.status === 400
+          const errorMessage = isBalanceError
+            ? 'Saldo insuficiente na Box Delivery. Recarregue o saldo e entre em contato com a transportadora.'
+            : `${errData.message || 'Falha ao chamar entregador'} (cód: ${errData.code || boxRes.status})`
 
-          if (isBalanceError) {
-            addToast(
-              '⚠️ Saldo insuficiente na Box Delivery. Recarregue o saldo e entre em contato com a transportadora.',
-              'error',
-              14000
-            )
-          } else {
-            addToast(
-              `⚠️ Box Delivery: ${errData.message || 'Falha ao chamar entregador'} (cód: ${errData.code || boxRes.status})`,
-              'warning',
-              10000
-            )
-          }
+          setBoxDeliveryFailure({ message: errorMessage, at: Date.now() })
+          addToast(
+            isBalanceError ? `⚠️ ${errorMessage}` : `⚠️ Box Delivery: ${errorMessage}`,
+            isBalanceError ? 'error' : 'warning',
+            isBalanceError ? 14000 : 10000
+          )
         }
       } catch (boxErr) {
         console.error('❌ Box Delivery erro:', boxErr)
-        addToast('❌ Erro ao conectar com a transportadora.', 'error')
+        const errorMessage = boxErr?.message || 'Erro ao conectar com a transportadora.'
+        setBoxDeliveryFailure({ message: errorMessage, at: Date.now() })
+        addToast('❌ ' + errorMessage, 'error')
       }
     },
     [boxDeliveryAtivo, addToast]
@@ -831,13 +944,23 @@ const handlePrintBagLabels = useCallback(
 
   // ── API: atualiza status de um pedido ─────────────────────────────────────
   const apiUpdateStatus = async (id, status) => {
-    return apiFetch(
+    const res = await apiFetch(
       `https://painel.nexfood.app/api/pedidos/${id}/status`,
       {
         method: 'PATCH',
         body: JSON.stringify({ status }),
       }
     )
+
+    if (!res.ok) {
+      const message = await getApiErrorMessage(
+        res,
+        `Falha ao atualizar status do pedido (${res.status})`
+      )
+      throw new Error(message)
+    }
+
+    return res
   }
 
   // ── fetchPedidos ──────────────────────────────────────────────────────────
@@ -848,7 +971,7 @@ const handlePrintBagLabels = useCallback(
   // 2. settingsRef.current: lê configurações no momento da execução
   //    sem adicionar deps voláteis ao useCallback.
   // 3. Deps estáveis: [playNotificationSound, sendPushNotification,
-  //    handlePrint, callBoxDelivery] — todas são useCallbacks com deps
+  //    handlePrint, callBoxDelivery, addToast] — todas são useCallbacks com deps
   //    fixas, então fetchPedidos não é recriado desnecessariamente.
   // ──────────────────────────────────────────────────────────────────────────
   const fetchPedidos = useCallback(async () => {
@@ -901,16 +1024,24 @@ const handlePrintBagLabels = useCallback(
         )
 
         for (const pedido of novos) {
-          processedOrderIds.current.add(pedido._id)
-          playNotificationSound()
-          sendPushNotification(
-            'Novo Pedido Aceito!',
-            `Pedido #${pedido._id.slice(-4)} enviado para cozinha.`
-          )
-          await apiUpdateStatus(pedido._id, 'Em preparação')
-          if (impressoraAutomatica) handlePrint(pedido)
-          await callBoxDelivery(pedido)
-          pedido.status = 'Em preparação'
+          try {
+            await apiUpdateStatus(pedido._id, 'Em preparação')
+            processedOrderIds.current.add(pedido._id)
+            playNotificationSound()
+            sendPushNotification(
+              'Novo Pedido Aceito!',
+              'Pedido #' + pedido._id.slice(-4) + ' enviado para cozinha.'
+            )
+            if (impressoraAutomatica) handlePrint(pedido)
+            await callBoxDelivery(pedido)
+            pedido.status = 'Em preparação'
+          } catch (err) {
+            console.error('Erro ao aceitar pedido automaticamente:', err)
+            addToast(
+              err?.message || 'Erro ao aceitar pedido automaticamente.',
+              'error'
+            )
+          }
         }
       } else {
         const novosPendentes = pedidosConfirmados.filter(
@@ -942,7 +1073,7 @@ const handlePrintBagLabels = useCallback(
     } finally {
       setLoading(false)
     }
-  }, [playNotificationSound, sendPushNotification, handlePrint, callBoxDelivery])
+  }, [playNotificationSound, sendPushNotification, handlePrint, callBoxDelivery, addToast])
 
   useEffect(() => {
   if (isOnline && wasOffline.current) fetchPedidos()
@@ -979,7 +1110,7 @@ const handlePrintBagLabels = useCallback(
       if (
         nextStatus === 'Saiu para entrega' &&
         settingsRef.current.appEntregador &&
-        pedido.tipo === 'Delivery'
+        isDelivery(pedido)
       ) {
         setMotoboyModalTarget(pedido)
         return
@@ -996,7 +1127,7 @@ const handlePrintBagLabels = useCallback(
 
         if (nextStatus === 'Em preparação') {
           if (settingsRef.current.impressoraAutomatica) handlePrint(pedido)
-          if (pedido.tipo === 'Delivery') await callBoxDelivery(pedido)
+          if (isDelivery(pedido)) await callBoxDelivery(pedido)
         }
 
         await fetchPedidos()
@@ -1004,7 +1135,10 @@ const handlePrintBagLabels = useCallback(
         setPedidos((prev) =>
           prev.map((p) => p._id === pedido._id ? { ...p, status: pedido.status } : p)
         )
-        addToast('Erro ao atualizar status. Verifique a conexão e tente novamente.', 'error')
+        addToast(
+          err?.message || 'Erro ao atualizar status. Verifique a conexão e tente novamente.',
+          'error'
+        )
       } finally {
         setLoadingOrderId(null)
       }
@@ -1086,8 +1220,10 @@ const handlePrintBagLabels = useCallback(
       })
     }
 
-    if (filters.tipo !== 'todos')
-      resultado = resultado.filter((p) => p.tipo === filters.tipo)
+    if (filters.tipo !== TIPO_PEDIDO_TODOS)
+      resultado = resultado.filter(
+        (p) => normalizeTipoPedido(p.tipo) === normalizeTipoPedido(filters.tipo)
+      )
 
     if (filters.pagamento !== 'todos')
       resultado = resultado.filter((p) =>
@@ -1152,7 +1288,7 @@ const handlePrintBagLabels = useCallback(
   const clearFilters = useCallback(() => {
     setSearchQuery('')
     setFilters({
-      tipo: 'todos',
+      tipo: TIPO_PEDIDO_TODOS,
       pagamento: 'todos',
       valorMin: '',
       valorMax: '',
@@ -1216,7 +1352,7 @@ const handlePrintBagLabels = useCallback(
   const activeFiltersCount = useMemo(() => {
     let count = 0
     if (searchQuery.trim()) count++
-    if (filters.tipo !== 'todos') count++
+    if (filters.tipo !== TIPO_PEDIDO_TODOS) count++
     if (filters.pagamento !== 'todos') count++
     if (filters.valorMin || filters.valorMax) count++
     if (filters.apenasAgrupados) count++
@@ -1224,6 +1360,115 @@ const handlePrintBagLabels = useCallback(
     if (filters.apenasRecorrentes) count++
     return count
   }, [searchQuery, filters])
+
+  const delayedOrders = useMemo(
+    () => pedidosComClusters.filter((p) => {
+      if (['Entregue', 'Cancelado'].includes(p.status)) return false
+      const estimatedMins = isDelivery(p) ? 40 : 15
+      return getTimeElapsed(p.createdAt).minutes > estimatedMins
+    }),
+    [pedidosComClusters, secondsSinceUpdate]
+  )
+
+  const operationalAlerts = useMemo(() => {
+    const alerts = []
+
+    if (delayedOrders.length > 0) {
+      alerts.push({
+        id: 'delayed-orders',
+        severity: 'critical',
+        icon: 'fa-stopwatch',
+        label: `${delayedOrders.length} atrasado${delayedOrders.length > 1 ? 's' : ''}`,
+        detail: `Mais antigo #${getOrderNumber(delayedOrders[0])}`,
+        onClick: () => setSelectedOrder(delayedOrders[0]),
+      })
+    }
+
+    if (pedidosRecusados.length > 0) {
+      alerts.push({
+        id: 'pix-recused',
+        severity: 'critical',
+        icon: 'fa-circle-xmark',
+        label: `${pedidosRecusados.length} Pix recusado${pedidosRecusados.length > 1 ? 's' : ''}`,
+        detail: `Pedido #${getOrderNumber(pedidosRecusados[0])}`,
+        onClick: () => setSelectedOrder(pedidosRecusados[0]),
+      })
+    }
+
+    if (pedidosPendentes.length > 0) {
+      alerts.push({
+        id: 'pix-pending',
+        severity: 'warning',
+        icon: 'fa-clock',
+        label: `${pedidosPendentes.length} Pix pendente${pedidosPendentes.length > 1 ? 's' : ''}`,
+        detail: `Aguardando confirmação`,
+        onClick: () => setSelectedOrder(pedidosPendentes[0]),
+      })
+    }
+
+    if (printFailure) {
+      alerts.push({
+        id: 'print-failure',
+        severity: 'critical',
+        icon: 'fa-print',
+        label: 'Falha ao imprimir',
+        detail: printFailure.printerName || printFailure.message,
+      })
+    }
+
+    if (nexBotStatus === 'offline') {
+      alerts.push({
+        id: 'nexbot-offline',
+        severity: 'warning',
+        icon: 'fa-brands fa-whatsapp',
+        label: 'NexBot offline',
+        detail: 'Clientes sem WhatsApp automático',
+      })
+    }
+
+    if (boxDeliveryFailure) {
+      alerts.push({
+        id: 'box-delivery-failure',
+        severity: 'critical',
+        icon: 'fa-motorcycle',
+        label: 'Falha Box Delivery',
+        detail: boxDeliveryFailure.message,
+      })
+    }
+
+    if (settings.appEntregador && motoboyAvailability.checked && motoboyAvailability.count === 0) {
+      alerts.push({
+        id: 'motoboys-offline',
+        severity: 'warning',
+        icon: 'fa-user-slash',
+        label: 'Motoboys offline',
+        detail: motoboyAvailability.error || 'Nenhum disponível',
+      })
+    }
+
+    if (!isOnline || isFromCache) {
+      alerts.push({
+        id: 'offline-cache',
+        severity: !isOnline ? 'critical' : 'warning',
+        icon: 'fa-wifi',
+        label: !isOnline ? 'Loja sem internet' : 'Modo cache',
+        detail: !isOnline ? 'Exibindo últimos dados salvos' : 'Sincronizando pedidos',
+      })
+    }
+
+    return alerts
+  }, [
+    delayedOrders,
+    pedidosRecusados,
+    pedidosPendentes,
+    printFailure,
+    nexBotStatus,
+    boxDeliveryFailure,
+    settings.appEntregador,
+    motoboyAvailability,
+    isOnline,
+    isFromCache,
+  ])
 
   // ── Skeleton durante loading inicial ─────────────────────────────────────
   if (loading) {
@@ -1380,6 +1625,7 @@ const handlePrintBagLabels = useCallback(
                     type="button"
                   >
                     <i className={`fas ${showFaturamento ? 'fa-eye' : 'fa-eye-slash'} text-xs`} aria-hidden="true" />
+
                   </button>
                 </div>
                 <span className="text-xl font-bold text-emerald-600 tabular-nums tracking-wide">
@@ -1489,10 +1735,12 @@ const handlePrintBagLabels = useCallback(
               )}
             </div>
           </div>
+
+          <OperationalAlertsBar alerts={operationalAlerts} />
         </header>
 
         {/* ── Corpo principal ────────────────────────────────────────────── */}
-        <div className="flex h-[calc(100vh-81px)]">
+        <div className="flex flex-1 min-h-0">
 
           {/* Kanban Board */}
           <main
@@ -1670,9 +1918,9 @@ const handlePrintBagLabels = useCallback(
                   }
                   className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
                 >
-                  <option value="todos">Todos os tipos</option>
-                  <option value="Delivery">Delivery</option>
-                  <option value="Balcão">Balcão</option>
+                  <option value={TIPO_PEDIDO_TODOS}>Todos os tipos</option>
+                  <option value={TIPO_PEDIDO_DELIVERY}>Delivery</option>
+                  <option value={TIPO_PEDIDO_BALCAO}>Balcão</option>
                 </select>
               </div>
 
@@ -2546,7 +2794,7 @@ function OrderCard({
   }
 
   const { minutes, isUrgent } = getTimeElapsed(pedido.createdAt)
-  const estimatedMins = pedido.tipo === 'Delivery' ? 40 : 15
+  const estimatedMins = isDelivery(pedido) ? 40 : 15
   const countdown = useCountdown(pedido.createdAt, estimatedMins)
 
   // Monta o tooltip do countdown com contexto claro para o operador
@@ -2657,18 +2905,18 @@ function OrderCard({
       <div className="flex items-center gap-1.5 flex-wrap">
         <span
           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
-            pedido.tipo === 'Delivery'
+            isDelivery(pedido)
               ? 'bg-blue-50 text-blue-700 border border-blue-200'
               : 'bg-orange-50 text-orange-700 border border-orange-200'
           }`}
         >
           <i
             className={`fas ${
-              pedido.tipo === 'Delivery' ? 'fa-motorcycle' : 'fa-store'
+              isDelivery(pedido) ? 'fa-motorcycle' : 'fa-store'
             } text-[9px]`}
             aria-hidden="true"
           ></i>
-          {pedido.tipo === 'Delivery' ? 'Delivery' : 'Balcão'}
+          {getTipoPedidoLabel(pedido.tipo)}
         </span>
         {pagamentoLabel && (
           <>
@@ -2686,7 +2934,7 @@ function OrderCard({
       </div>
 
       {/* Linha 4: Endereço (só Delivery) */}
-      {pedido.tipo === 'Delivery' && pedido.enderecoEntrega && (
+      {isDelivery(pedido) && pedido.enderecoEntrega && (
         <div className="flex items-start gap-1">
           <i
             className="fas fa-map-marker-alt text-[9px] text-gray-400 mt-0.5 shrink-0"
@@ -3427,6 +3675,50 @@ function ToastContainer({ toasts }) {
           <Toast toast={toast} />
         </div>
       ))}
+    </div>
+  )
+}
+
+function OperationalAlertsBar({ alerts }) {
+  if (!alerts.length) return null
+
+  const styles = {
+    critical: 'bg-red-50 border-red-200 text-red-800 hover:bg-red-100',
+    warning: 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100',
+    info: 'bg-blue-50 border-blue-200 text-blue-800 hover:bg-blue-100',
+  }
+
+  return (
+    <div className="border-t border-gray-100 bg-gray-50/80 px-4 py-2" role="status" aria-live="polite">
+      <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+        <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wide text-gray-500 shrink-0">
+          <i className="fas fa-triangle-exclamation" aria-hidden="true" />
+          Operação
+        </span>
+        {alerts.map((alert) => {
+          const content = (
+            <>
+              <i className={`${alert.icon.includes('fa-brands') ? alert.icon : `fas ${alert.icon}`} text-xs`} aria-hidden="true" />
+              <span className="font-black whitespace-nowrap">{alert.label}</span>
+              {alert.detail && (
+                <span className="hidden md:inline max-w-[220px] truncate opacity-80">{alert.detail}</span>
+              )}
+            </>
+          )
+
+          const className = `inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs transition-colors shrink-0 ${styles[alert.severity] || styles.info}`
+
+          return alert.onClick ? (
+            <button key={alert.id} type="button" onClick={alert.onClick} className={className}>
+              {content}
+            </button>
+          ) : (
+            <div key={alert.id} className={className}>
+              {content}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

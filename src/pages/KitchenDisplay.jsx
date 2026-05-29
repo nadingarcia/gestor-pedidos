@@ -1,5 +1,30 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import electronAPI from '@utils/electronBridge'
+import { getTipoPedidoLabel, isDelivery } from '@utils/orderType'
+
+const KITCHEN_PREFS_KEY = 'nexfood_kitchen_display_prefs'
+const KITCHEN_READY_KEY = 'nexfood_kitchen_ready_items'
+
+const TYPE_CONFIG = {
+  delivery: {
+    label: 'Delivery',
+    icon: 'fa-motorcycle',
+    badge: 'bg-blue-900 text-blue-300 border-blue-700/50',
+    section: 'border-blue-500/40',
+  },
+  balcao: {
+    label: 'Balcão',
+    icon: 'fa-store',
+    badge: 'bg-orange-900 text-orange-300 border-orange-700/50',
+    section: 'border-orange-500/40',
+  },
+  retirada: {
+    label: 'Retirada',
+    icon: 'fa-bag-shopping',
+    badge: 'bg-emerald-900 text-emerald-300 border-emerald-700/50',
+    section: 'border-emerald-500/40',
+  },
+}
 
 const formatTime = (dateStr) => {
   if (!dateStr) return '--:--'
@@ -9,19 +34,59 @@ const formatTime = (dateStr) => {
   })
 }
 
-const getMinutes = (dateStr) => {
-  if (!dateStr) return 0
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000)
-}
 
 const getOrderNumber = (p) =>
   p?.numeroPedido || p?._id?.slice(-4).toUpperCase() || '----'
 
 const cleanName = (name = '') => name.replace(/\s*\(padrão\)/gi, '').trim()
 
+const stripAccents = (value = '') =>
+  String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+
+const normalizeText = (value = '') => stripAccents(value).trim().toLowerCase()
+
+const getItemObs = (item = {}) =>
+  item.obs || item.observacao || item.observacoes || item.observation || ''
+
+const getItemKey = (pedido, idx) => `${pedido._id}:${idx}`
+
+const getKitchenType = (pedido) => {
+  if (isDelivery(pedido)) return 'delivery'
+
+  const raw = normalizeText(
+    [pedido?.tipo, pedido?.tipoEntrega, pedido?.entrega, pedido?.origem]
+      .filter(Boolean)
+      .join(' ')
+  )
+
+  if (raw.includes('retirada') || raw.includes('retira') || raw.includes('takeaway')) {
+    return 'retirada'
+  }
+
+  return 'balcao'
+}
+
+const readJsonStorage = (key, fallback) => {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : fallback
+  } catch {
+    return fallback
+  }
+}
+
 export default function KitchenDisplay() {
   const [orders, setOrders] = useState([])
   const [now, setNow] = useState(Date.now())
+  const [prefs, setPrefs] = useState(() =>
+    readJsonStorage(KITCHEN_PREFS_KEY, {
+      kitchenOnly: true,
+      showBatch: true,
+    })
+  )
+  const [readyItems, setReadyItems] = useState(() =>
+    readJsonStorage(KITCHEN_READY_KEY, {})
+  )
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -33,183 +98,340 @@ export default function KitchenDisplay() {
     return () => electronAPI.offKitchenOrders()
   }, [])
 
+  useEffect(() => {
+    localStorage.setItem(KITCHEN_PREFS_KEY, JSON.stringify(prefs))
+  }, [prefs])
+
+  useEffect(() => {
+    localStorage.setItem(KITCHEN_READY_KEY, JSON.stringify(readyItems))
+  }, [readyItems])
+
+  useEffect(() => {
+    const validKeys = new Set()
+    orders.forEach((pedido) => {
+      ;(pedido.itens || []).forEach((_, idx) => validKeys.add(getItemKey(pedido, idx)))
+    })
+
+    setReadyItems((prev) => {
+      const next = {}
+      Object.entries(prev).forEach(([key, value]) => {
+        if (validKeys.has(key) && value) next[key] = true
+      })
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next
+    })
+  }, [orders])
+
+  const toggleReady = useCallback((pedido, idx) => {
+    const key = getItemKey(pedido, idx)
+    setReadyItems((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
+
   const sortedOrders = useMemo(() => {
     return [...orders].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     )
   }, [orders])
 
+  const ordersByType = useMemo(() => {
+    const grouped = { delivery: [], balcao: [], retirada: [] }
+    sortedOrders.forEach((pedido) => grouped[getKitchenType(pedido)].push(pedido))
+    return grouped
+  }, [sortedOrders])
+
+  const batchProducts = useMemo(() => {
+    const map = new Map()
+
+    sortedOrders.forEach((pedido) => {
+      ;(pedido.itens || []).forEach((item, idx) => {
+        if (readyItems[getItemKey(pedido, idx)]) return
+
+        const name = cleanName(item.nome || 'Item sem nome')
+        const key = normalizeText(name)
+        const current = map.get(key) || {
+          name,
+          quantity: 0,
+          orders: [],
+          observations: 0,
+        }
+
+        current.quantity += Number(item.quantidade) || 1
+        current.orders.push(getOrderNumber(pedido))
+        if (getItemObs(item)) current.observations += 1
+        map.set(key, current)
+      })
+    })
+
+    return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity)
+  }, [sortedOrders, readyItems])
+
   const oldestOrder = sortedOrders[0]
   const pendingCount = sortedOrders.length
+  const totalItems = sortedOrders.reduce((acc, pedido) => acc + (pedido.itens?.length || 0), 0)
+  const readyCount = sortedOrders.reduce(
+    (acc, pedido) =>
+      acc + (pedido.itens || []).filter((_, idx) => readyItems[getItemKey(pedido, idx)]).length,
+    0
+  )
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col select-none">
-      {/* Header */}
-      <header className="sticky top-0 z-20 flex items-center justify-between px-6 py-4 border-b border-gray-800 bg-gray-950/95 backdrop-blur shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg shadow-[#7f22fe]/30">
-            <i className="fas fa-bolt text-white text-xl"></i>
+      <header className="sticky top-0 z-20 border-b border-gray-800 bg-gray-950/95 backdrop-blur shrink-0">
+        <div className="flex items-center justify-between gap-4 px-6 py-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg shadow-[#7f22fe]/30 shrink-0">
+              <i className="fas fa-bolt text-white text-xl" aria-hidden="true"></i>
+            </div>
+            <div className="min-w-0">
+              <p className="text-lg font-black tracking-tight leading-tight">Cozinha</p>
+              <p className="text-xs text-gray-400 truncate">
+                {oldestOrder ? `Mais antigo: #${getOrderNumber(oldestOrder)}` : 'Sem pedidos no momento'}
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-lg font-black tracking-tight leading-tight">Cozinha</p>
-            <p className="text-xs text-gray-400">
-              {oldestOrder ? `Mais antigo: #${getOrderNumber(oldestOrder)}` : 'Sem pedidos no momento'}
-            </p>
+
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button
+              type="button"
+              onClick={() => setPrefs((prev) => ({ ...prev, showBatch: !prev.showBatch }))}
+              className={`h-9 px-3 rounded-lg border text-xs font-black transition-colors ${
+                prefs.showBatch
+                  ? 'bg-purple-500/20 border-purple-400 text-purple-200'
+                  : 'bg-gray-900 border-gray-700 text-gray-400'
+              }`}
+              title="Mostrar ou ocultar produção em lote"
+            >
+              <i className="fas fa-layer-group mr-1.5" aria-hidden="true"></i>
+              Lote
+            </button>
+            <button
+              type="button"
+              onClick={() => setPrefs((prev) => ({ ...prev, kitchenOnly: !prev.kitchenOnly }))}
+              className={`h-9 px-3 rounded-lg border text-xs font-black transition-colors ${
+                prefs.kitchenOnly
+                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                  : 'bg-gray-900 border-gray-700 text-gray-400'
+              }`}
+              title="Modo somente cozinha: oculta informações comerciais"
+            >
+              <i className="fas fa-utensils mr-1.5" aria-hidden="true"></i>
+              Somente cozinha
+            </button>
+            <span className="hidden sm:inline-flex items-center gap-2 text-gray-400 text-sm">
+              <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
+              {new Date(now).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            <span className="text-sm font-black bg-orange-500 px-3 py-1.5 rounded-full text-white">
+              {pendingCount} em preparo
+            </span>
+            <span className="text-sm font-black bg-gray-800 px-3 py-1.5 rounded-full text-gray-200">
+              {readyCount}/{totalItems} itens
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
-          <span className="text-gray-400 text-sm">
-            {new Date().toLocaleTimeString('pt-BR', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </span>
-          <span className="ml-2 text-sm font-black bg-orange-500 px-3 py-1.5 rounded-full text-white">
-            {pendingCount} em preparo
-          </span>
-        </div>
+        {prefs.showBatch && batchProducts.length > 0 && (
+          <div className="border-t border-gray-800 px-6 py-3 bg-black/20">
+            <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+              <span className="text-[11px] font-black uppercase tracking-wider text-gray-400 shrink-0">
+                Produção em lote
+              </span>
+              {batchProducts.slice(0, 12).map((product) => (
+                <div
+                  key={product.name}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 shrink-0"
+                >
+                  <span className="text-lg font-black text-orange-300 tabular-nums">
+                    {product.quantity}x
+                  </span>
+                  <span className="text-sm font-bold text-white max-w-[180px] truncate">
+                    {product.name}
+                  </span>
+                  <span className="text-[10px] text-gray-500">
+                    #{product.orders.slice(0, 4).join(' #')}
+                  </span>
+                  {product.observations > 0 && (
+                    <span className="text-[10px] font-black text-yellow-300 bg-yellow-950/70 border border-yellow-500/30 px-1.5 py-0.5 rounded">
+                      obs {product.observations}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </header>
 
-      {/* Grid */}
       <main className="flex-1 p-5 overflow-y-auto">
         {sortedOrders.length === 0 ? (
           <div className="h-full min-h-[60vh] flex flex-col items-center justify-center gap-4 opacity-30">
-            <i className="fas fa-fire text-6xl text-orange-400"></i>
+            <i className="fas fa-fire text-6xl text-orange-400" aria-hidden="true"></i>
             <p className="text-xl font-medium">Aguardando pedidos...</p>
           </div>
         ) : (
-          <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {sortedOrders.map((pedido) => {
-              const mins = Math.floor((now - new Date(pedido.createdAt)) / 60000)
-              const isUrgent = mins >= 30
-              const isWarning = mins >= 20 && mins < 30
-              const isRecent = mins < 10
-
-              const cardStyle = isUrgent
-                ? 'bg-red-950/70 border-red-500 shadow-red-500/10'
-                : isWarning
-                ? 'bg-yellow-950/55 border-yellow-500 shadow-yellow-500/10'
-                : 'bg-gray-900 border-gray-700 shadow-black/20'
-
-              const timeBadgeStyle = isUrgent
-                ? 'bg-red-500 text-white'
-                : isWarning
-                ? 'bg-yellow-500 text-yellow-950'
-                : isRecent
-                ? 'bg-emerald-500 text-emerald-950'
-                : 'bg-gray-700 text-gray-200'
+          <div className="space-y-6">
+            {Object.entries(TYPE_CONFIG).map(([type, config]) => {
+              const typeOrders = ordersByType[type]
+              if (!typeOrders.length) return null
 
               return (
-                <div
-                  key={pedido._id}
-                  className={`rounded-2xl p-4 border-2 flex flex-col gap-4 transition-all duration-200 ${cardStyle}`}
-                >
-                  {/* Cabeçalho do card */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-2xl font-black tracking-tight">
-                          #{getOrderNumber(pedido)}
-                        </span>
-
-                        {isUrgent && (
-                          <span className="text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-2 py-1 rounded-full">
-                            urgente
-                          </span>
-                        )}
-
-                        {isWarning && !isUrgent && (
-                          <span className="text-[10px] font-black uppercase tracking-widest bg-yellow-500 text-yellow-950 px-2 py-1 rounded-full">
-                            atenção
-                          </span>
-                        )}
-                      </div>
-
-                      <p className="text-gray-400 text-sm mt-1">
-                        {pedido.cliente?.nome || 'Consumidor'} · {formatTime(pedido.createdAt)}
-                      </p>
-                    </div>
-
-                    <span
-                      className={`text-lg font-black px-3 py-1.5 rounded-xl tabular-nums min-w-[58px] text-center ${timeBadgeStyle}`}
-                    >
-                      {mins}m
+                <section key={type} className={`border-l-4 pl-4 ${config.section}`}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-black ${config.badge}`}>
+                      <i className={`fas ${config.icon}`} aria-hidden="true"></i>
+                      {config.label}
+                    </span>
+                    <span className="text-xs font-bold text-gray-500">
+                      {typeOrders.length} pedido{typeOrders.length > 1 ? 's' : ''}
                     </span>
                   </div>
 
-                  {/* Tipo */}
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                        pedido.tipo === 'Delivery'
-                          ? 'bg-blue-900 text-blue-300'
-                          : 'bg-orange-900 text-orange-300'
-                      }`}
-                    >
-                      <i
-                        className={`fas ${
-                          pedido.tipo === 'Delivery' ? 'fa-motorcycle' : 'fa-store'
-                        } mr-1`}
-                      ></i>
-                      {pedido.tipo}
-                    </span>
-
-                    <span className="text-xs text-gray-400">
-                      {pedido.itens?.length || 0} item(ns)
-                    </span>
-                  </div>
-
-                  {/* Itens */}
-                  <div className="space-y-3 border-t border-gray-800 pt-3">
-                    {(pedido.itens || []).map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="rounded-xl bg-black/20 border border-white/5 px-3 py-3"
-                      >
-                        <div className="flex gap-3 items-start">
-                          <span className="text-sm font-black text-orange-400 min-w-[38px] bg-orange-500/10 border border-orange-500/20 rounded-lg px-2 py-1 text-center">
-                            {item.quantidade}x
-                          </span>
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm font-bold leading-tight break-words">
-                                {cleanName(item.nome)}
-                              </p>
-                            </div>
-
-                            {item.complementos?.length > 0 && (
-                              <div className="mt-1 space-y-0.5">
-                                {item.quantidade > 1 && (
-                                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">
-                                    cada unidade:
-                                  </p>
-                                )}
-                                <p className="text-sm text-gray-400">
-                                  + {item.complementos.join(', ')}
-                                </p>
-                              </div>
-                            )}
-
-                            {item.obs && (
-                              <p className="text-xs text-yellow-300 mt-2 bg-yellow-950/70 border border-yellow-500/20 px-2.5 py-2 rounded-lg">
-                                <i className="fas fa-triangle-exclamation mr-1"></i>
-                                {item.obs}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                  <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {typeOrders.map((pedido) => (
+                      <KitchenOrderCard
+                        key={pedido._id}
+                        pedido={pedido}
+                        now={now}
+                        typeConfig={config}
+                        kitchenOnly={prefs.kitchenOnly}
+                        readyItems={readyItems}
+                        onToggleReady={toggleReady}
+                      />
                     ))}
                   </div>
-                </div>
+                </section>
               )
             })}
           </div>
         )}
       </main>
     </div>
+  )
+}
+
+function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, readyItems, onToggleReady }) {
+  const mins = Math.floor((now - new Date(pedido.createdAt)) / 60000)
+  const isUrgent = mins >= 30
+  const isWarning = mins >= 20 && mins < 30
+  const isRecent = mins < 10
+  const items = pedido.itens || []
+  const readyCount = items.filter((_, idx) => readyItems[getItemKey(pedido, idx)]).length
+  const allReady = items.length > 0 && readyCount === items.length
+
+  const cardStyle = allReady
+    ? 'bg-emerald-950/40 border-emerald-500/70 shadow-emerald-500/10'
+    : isUrgent
+    ? 'bg-red-950/70 border-red-500 shadow-red-500/10'
+    : isWarning
+    ? 'bg-yellow-950/55 border-yellow-500 shadow-yellow-500/10'
+    : 'bg-gray-900 border-gray-700 shadow-black/20'
+
+  const timeBadgeStyle = isUrgent
+    ? 'bg-red-500 text-white'
+    : isWarning
+    ? 'bg-yellow-500 text-yellow-950'
+    : isRecent
+    ? 'bg-emerald-500 text-emerald-950'
+    : 'bg-gray-700 text-gray-200'
+
+  return (
+    <article className={`rounded-2xl p-4 border-2 flex flex-col gap-4 transition-all duration-200 ${cardStyle}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-2xl font-black tracking-tight">#{getOrderNumber(pedido)}</span>
+            {allReady && (
+              <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-500 text-emerald-950 px-2 py-1 rounded-full">
+                pronto
+              </span>
+            )}
+            {isUrgent && !allReady && (
+              <span className="text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-2 py-1 rounded-full">
+                urgente
+              </span>
+            )}
+            {isWarning && !isUrgent && !allReady && (
+              <span className="text-[10px] font-black uppercase tracking-widest bg-yellow-500 text-yellow-950 px-2 py-1 rounded-full">
+                atenção
+              </span>
+            )}
+          </div>
+          <p className="text-gray-400 text-sm mt-1 truncate">
+            {kitchenOnly ? formatTime(pedido.createdAt) : `${pedido.cliente?.nome || 'Consumidor'} · ${formatTime(pedido.createdAt)}`}
+          </p>
+        </div>
+
+        <span className={`text-lg font-black px-3 py-1.5 rounded-xl tabular-nums min-w-[58px] text-center ${timeBadgeStyle}`}>
+          {mins}m
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${typeConfig.badge}`}>
+          <i className={`fas ${typeConfig.icon} mr-1`} aria-hidden="true"></i>
+          {typeConfig.label || getTipoPedidoLabel(pedido.tipo)}
+        </span>
+        <span className="text-xs text-gray-400">
+          {readyCount}/{items.length} item(ns) prontos
+        </span>
+      </div>
+
+      <div className="space-y-3 border-t border-gray-800 pt-3">
+        {items.map((item, idx) => {
+          const itemReady = !!readyItems[getItemKey(pedido, idx)]
+          const obs = getItemObs(item)
+
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => onToggleReady(pedido, idx)}
+              className={`w-full text-left rounded-xl border px-3 py-3 transition-all focus:outline-none focus:ring-2 focus:ring-emerald-400/60 ${
+                itemReady
+                  ? 'bg-emerald-950/30 border-emerald-500/40 opacity-70'
+                  : 'bg-black/20 border-white/5 hover:border-emerald-400/40'
+              }`}
+              title="Clique ou pressione Enter para marcar este item como pronto"
+            >
+              {obs && (
+                <div className="mb-2 text-sm text-yellow-200 bg-yellow-950/80 border border-yellow-400/30 px-3 py-2 rounded-lg font-bold">
+                  <i className="fas fa-triangle-exclamation mr-1.5" aria-hidden="true"></i>
+                  {obs}
+                </div>
+              )}
+
+              <div className="flex gap-3 items-start">
+                <span className="text-sm font-black text-orange-400 min-w-[38px] bg-orange-500/10 border border-orange-500/20 rounded-lg px-2 py-1 text-center">
+                  {item.quantidade}x
+                </span>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className={`text-sm font-bold leading-tight break-words ${itemReady ? 'line-through text-gray-400' : 'text-white'}`}>
+                      {cleanName(item.nome)}
+                    </p>
+                    <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-full ${itemReady ? 'bg-emerald-500 text-emerald-950' : 'bg-gray-800 text-gray-400'}`}>
+                      {itemReady ? 'pronto' : 'marcar pronto'}
+                    </span>
+                  </div>
+
+                  {item.complementos?.length > 0 && (
+                    <div className="mt-1 space-y-0.5">
+                      {item.quantidade > 1 && (
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">
+                          cada unidade:
+                        </p>
+                      )}
+                      <p className={`text-sm ${itemReady ? 'text-gray-500 line-through' : 'text-gray-400'}`}>
+                        + {item.complementos.join(', ')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </article>
   )
 }

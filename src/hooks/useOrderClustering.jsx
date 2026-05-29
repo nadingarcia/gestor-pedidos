@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { isDelivery } from '@utils/orderType'
 
 // Gera uma cor consistente baseada no ID do cluster (Hashed Color)
 // Garante que o Cluster A sempre tenha a mesma cor, sem limitar a 8 opções.
@@ -63,7 +64,7 @@ export function useOrderClustering(
     // 2. Separar pedidos que PODEM ser agrupados (Delivery + Pendente/Preparo + Com LatLong)
     // Ignoramos pedidos que já saíram para entrega para não bagunçar a lógica ativa
     const activeDeliveryOrders = pedidos.filter(p => 
-      p.tipo === 'Delivery' && 
+      isDelivery(p) && 
       p.enderecoEntrega?.latitude && 
       p.enderecoEntrega?.longitude &&
       ['Recebido', 'Em preparação'].includes(p.status)
