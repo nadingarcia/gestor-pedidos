@@ -15,6 +15,7 @@ import { notifyOrderStatus } from '@utils/nexBotNotify'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch } from '../utils/apiFetch'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
+import packageInfo from '../../package.json'
 import {
   TIPO_PEDIDO_BALCAO,
   TIPO_PEDIDO_DELIVERY,
@@ -52,6 +53,7 @@ notificationAudio.preload = 'auto'
 
 const CACHE_KEY = 'nexfood_pedidos_cache'
 const CACHE_MAX_AGE_MS = 8 * 60 * 60 * 1000 // 8 horas
+const PRINT_STATUS_KEY = 'nexfood_order_print_status'
 
 const readPedidosCache = () => {
   try {
@@ -75,6 +77,14 @@ const writePedidosCache = (data) => {
       data,
     }))
   } catch {} // quota exceeded — silencioso
+}
+
+const readPrintStatuses = () => {
+  try {
+    return JSON.parse(localStorage.getItem(PRINT_STATUS_KEY) || '{}')
+  } catch {
+    return {}
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,6 +112,116 @@ const formatDate = (dateStr) => {
 const getOrderNumber = (pedido) =>
   pedido?.numeroPedido || pedido?._id?.slice(-4).toUpperCase() || '----'
 
+const escapeHtml = (value = '') =>
+  String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+
+const DISCOUNT_LABELS = {
+  CASHBACK: 'Cashback',
+  DESCONTO_PERCENTUAL: 'Desconto percentual',
+  PRIMEIRA_COMPRA: 'Primeira compra',
+  MINIJOGO: 'Minijogo',
+  MINI_JOGO: 'Minijogo',
+  'MINI-GAME': 'Minijogo',
+  MINIGAME: 'Minijogo',
+  CAMPANHA: 'Campanha',
+  COMBINADO: 'Desconto combinado',
+}
+
+const getDiscountInfo = (pedido) => {
+  if (!pedido || Number(pedido.desconto || 0) <= 0) return null
+
+  const origem = String(pedido.origemDesconto || '').trim().toUpperCase()
+  const campanhaNome = String(pedido.campanha?.nome || '').trim()
+  const campanhaPercentual = Number(pedido.campanha?.valorDesconto || 0)
+
+  if (campanhaNome) {
+    const campaignLabel = campanhaPercentual > 0
+      ? `Campanha: ${campanhaNome} (${campanhaPercentual}% OFF)`
+      : `Campanha: ${campanhaNome}`
+
+    return {
+      label: origem === 'COMBINADO' ? `${campaignLabel} + Cashback` : campaignLabel,
+      shortLabel: campanhaNome,
+      isCampaign: true,
+    }
+  }
+
+  const label = DISCOUNT_LABELS[origem] || 'Desconto'
+  return { label, shortLabel: label, isCampaign: false }
+}
+
+const hasOrderObservation = (pedido) =>
+  Boolean(String(pedido?.observacao || pedido?.observacoes || '').trim()) ||
+  (pedido?.itens || []).some((item) =>
+    String(item?.observacao || item?.observacoes || item?.obs || '').trim()
+  )
+
+const getPaymentInfo = (pedido) => {
+  const method = String(pedido?.formaPagamento || '').toLowerCase()
+  const status = String(pedido?.statusPagamento || '').toLowerCase()
+  const total = Number(pedido?.total || 0)
+  const isOnline = ['online_card', 'online_pix', 'pix_online', 'mercadopago'].includes(method)
+
+  if (isOnline && ['approved', 'aprovado', 'pago'].includes(status)) {
+    return {
+      label: 'PAGO ONLINE',
+      shortLabel: 'PAGO ONLINE',
+      className: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      icon: 'fa-circle-check',
+    }
+  }
+
+  if (isOnline && ['refused', 'recusado', 'rejeitado'].includes(status)) {
+    return {
+      label: 'PAGAMENTO RECUSADO',
+      shortLabel: 'RECUSADO',
+      className: 'bg-red-50 text-red-700 border-red-200',
+      icon: 'fa-circle-xmark',
+    }
+  }
+
+  if (isOnline) {
+    return {
+      label: 'PAGAMENTO PENDENTE',
+      shortLabel: 'PAG. PENDENTE',
+      className: 'bg-amber-50 text-amber-700 border-amber-200',
+      icon: 'fa-clock',
+    }
+  }
+
+  if (method === 'dinheiro' && Number(pedido?.trocoPara) > 0) {
+    return {
+      label: `DINHEIRO · TROCO R$ ${Number(pedido.trocoPara).toFixed(2).replace('.', ',')}`,
+      shortLabel: `TROCO R$ ${Number(pedido.trocoPara).toFixed(2).replace('.', ',')}`,
+      className: 'bg-blue-50 text-blue-700 border-blue-200',
+      icon: 'fa-money-bill-wave',
+    }
+  }
+
+  const methodLabel = {
+    dinheiro: 'DINHEIRO',
+    pix: 'PIX',
+    pix_presencial: 'PIX NA ENTREGA',
+    cartao: 'CARTÃO',
+    credito: 'CRÉDITO',
+    debito: 'DÉBITO',
+    debito_maq: 'MAQUININHA',
+    refeicao_maq: 'VALE-REFEIÇÃO',
+  }[method]
+
+  return {
+    label: `COBRAR R$ ${total.toFixed(2).replace('.', ',')}${methodLabel ? ` · ${methodLabel}` : ''}`,
+    shortLabel: methodLabel || 'COBRAR',
+    className: 'bg-slate-50 text-slate-700 border-slate-200',
+    icon: 'fa-wallet',
+  }
+}
+
 const getTimeElapsed = (dateStr) => {
   if (!dateStr) return { minutes: 0, isUrgent: false }
   const minutes = Math.floor((Date.now() - new Date(dateStr)) / 60000)
@@ -119,6 +239,90 @@ const getNextStatus = (currentStatus) => {
     'Saiu para entrega': 'Entregue',
   }
   return map[currentStatus] || null
+}
+
+const getOrderAction = (pedido) => {
+  const delivery = isDelivery(pedido)
+
+  const actions = {
+    Recebido: {
+      label: 'Aceitar pedido',
+      shortLabel: 'ACEITAR',
+      loadingLabel: 'Aceitando...',
+      successLabel: 'Pedido aceito e enviado para preparação.',
+      icon: 'fa-check',
+    },
+    'Em preparação': delivery
+      ? {
+          label: 'Enviar para entrega',
+          shortLabel: 'ENVIAR',
+          loadingLabel: 'Enviando...',
+          successLabel: 'Pedido enviado para entrega.',
+          icon: 'fa-motorcycle',
+        }
+      : {
+          label: 'Liberar para retirada',
+          shortLabel: 'LIBERAR',
+          loadingLabel: 'Liberando...',
+          successLabel: 'Pedido liberado para retirada.',
+          icon: 'fa-shopping-bag',
+        },
+    'Saiu para entrega': delivery
+      ? {
+          label: 'Marcar como entregue',
+          shortLabel: 'ENTREGUE',
+          loadingLabel: 'Finalizando...',
+          successLabel: 'Pedido marcado como entregue.',
+          icon: 'fa-check-circle',
+        }
+      : {
+          label: 'Marcar como retirado',
+          shortLabel: 'RETIRADO',
+          loadingLabel: 'Finalizando...',
+          successLabel: 'Pedido marcado como retirado.',
+          icon: 'fa-check-circle',
+        },
+  }
+
+  return actions[pedido?.status] || null
+}
+
+const getPrintStatusInfo = (printStatus) => {
+  const status = printStatus?.status || 'not_printed'
+  const options = {
+    not_printed: {
+      label: 'Não impresso',
+      shortLabel: 'NÃO IMP.',
+      icon: 'fa-print',
+      className: 'bg-gray-50 border-gray-200 text-gray-500',
+    },
+    printed_auto: {
+      label: 'Impresso automaticamente',
+      shortLabel: 'IMPRESSO',
+      icon: 'fa-check',
+      className: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+    },
+    printed_manual: {
+      label: 'Impresso',
+      shortLabel: 'IMPRESSO',
+      icon: 'fa-check',
+      className: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+    },
+    reprinted: {
+      label: `Reimpresso${printStatus?.count > 1 ? ` ${printStatus.count}x` : ''}`,
+      shortLabel: `REIMP.${printStatus?.count > 1 ? ` ${printStatus.count}x` : ''}`,
+      icon: 'fa-copy',
+      className: 'bg-blue-50 border-blue-200 text-blue-700',
+    },
+    failed: {
+      label: 'Falha na impressão',
+      shortLabel: 'FALHA IMP.',
+      icon: 'fa-triangle-exclamation',
+      className: 'bg-red-50 border-red-200 text-red-700',
+    },
+  }
+
+  return options[status] || options.not_printed
 }
 
 const getApiErrorMessage = async (res, fallbackMessage) => {
@@ -320,6 +524,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
   } = restaurantConfig
 
   const { fonteTamanho = 12, negritar = false } = printConfig
+  const discountInfo = getDiscountInfo(pedido)
 
   // Escala proporcional derivada do tamanho base escolhido
   const t = {
@@ -414,6 +619,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           .complementos-label { margin-left: 27px; font-size: var(--fs-xs); font-weight: var(--fw-heavy); text-transform: uppercase; letter-spacing: 0.5px; color: #000; margin-bottom: 1px; }
           .obs          { margin-left: 27px; margin-top: 3px; font-weight: var(--fw-heavy); font-size: var(--fs-sm); border-left: 3px solid #000; padding-left: 4px; color: #000; }
           .totals-row   { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: var(--fs-base); font-weight: var(--fw-bold); color: #000; }
+          .discount-reason { margin: -2px 0 5px; font-size: var(--fs-sm); font-weight: var(--fw-heavy); text-transform: uppercase; }
           .total-big    { font-size: var(--fs-total); font-weight: var(--fw-heavy); margin-top: 5px; color: #000; }
           .payment-box  { border: 2px solid #000; padding: 5px; margin-top: 8px; text-align: center; font-weight: var(--fw-heavy); font-size: var(--fs-lg); color: #000; }
           .footer       { margin-top: 8px; margin-bottom: 0; text-align: center; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; border-top: 2px dashed #000; padding-top: 6px; padding-bottom: 4px; }
@@ -454,6 +660,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
         <div class="totals-row"><span>Subtotal</span><span>${formatCurrency(pedido.subtotal)}</span></div>
         ${pedido.taxaEntrega > 0 ? `<div class="totals-row"><span>Taxa Entrega</span><span>${formatCurrency(pedido.taxaEntrega)}</span></div>` : ''}
         ${pedido.desconto > 0 ? `<div class="totals-row"><span>Desconto</span><span>- ${formatCurrency(pedido.desconto)}</span></div>` : ''}
+        ${discountInfo ? `<div class="discount-reason">Motivo: ${escapeHtml(discountInfo.label)}</div>` : ''}
         <div class="totals-row total-big"><span>TOTAL</span><span>${formatCurrency(pedido.total)}</span></div>
 
         <div class="divider"></div>
@@ -554,6 +761,7 @@ export default function OrderManager() {
   const [motoboyModalTarget, setMotoboyModalTarget] = useState(null)
   const [showSlugModal, setShowSlugModal] = useState(false)
   const [printFailure, setPrintFailure] = useState(null)
+  const [printStatuses, setPrintStatuses] = useState(readPrintStatuses)
   const [boxDeliveryFailure, setBoxDeliveryFailure] = useState(null)
   const [motoboyAvailability, setMotoboyAvailability] = useState({
     checked: false,
@@ -581,13 +789,30 @@ export default function OrderManager() {
   // ── Sistema de toasts ─────────────────────────────────────────────────────
   const [toasts, setToasts] = useState([])
 
-  const addToast = useCallback((message, type = 'info', duration = 6000) => {
-    const id = Date.now()
-    setToasts((prev) => [...prev, { id, message, type, duration }])
+  const removeToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id))
+  }, [])
+
+  const addToast = useCallback((message, type = 'info', duration = 6000, action = null) => {
+    const id = `${Date.now()}-${Math.random()}`
+    setToasts((prev) => [...prev, { id, message, type, duration, action }])
     setTimeout(
-      () => setToasts((prev) => prev.filter((t) => t.id !== id)),
+      () => removeToast(id),
       duration
     )
+  }, [removeToast])
+
+  useEffect(() => {
+    localStorage.setItem(PRINT_STATUS_KEY, JSON.stringify(printStatuses))
+  }, [printStatuses])
+
+  const updatePrintStatus = useCallback((orderId, update) => {
+    if (!orderId || orderId === PEDIDO_TESTE_IMPRESSAO._id) return
+    setPrintStatuses((prev) => {
+      const current = prev[orderId] || { status: 'not_printed', count: 0 }
+      const next = typeof update === 'function' ? update(current) : { ...current, ...update }
+      return { ...prev, [orderId]: next }
+    })
   }, [])
 
   // ── Box Delivery: lido do storage uma vez (sem volatile deps) ─────────────
@@ -830,19 +1055,46 @@ useEffect(() => {
 
   // ── Impressão: restaurantConfig passado como parâmetro (sem getItem extra) ─
   const handlePrint = useCallback(
-    async (pedido) => {
+    async (pedido, { automatic = false } = {}) => {
       const html = renderPedidoToHTML(pedido, restaurantConfig, {
         fonteTamanho: settingsRef.current.fonteTamanho,
         negritar: settingsRef.current.negritar,
       })
 
       if (electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica) {
-        await printWithFeedback(html)
-        return
+        const printed = await printWithFeedback(html)
+        if (printed) {
+          updatePrintStatus(pedido._id, (current) => {
+            const count = Number(current.count || 0) + 1
+            return {
+              status: count > 1 ? 'reprinted' : (automatic ? 'printed_auto' : 'printed_manual'),
+              count,
+              lastPrintedAt: Date.now(),
+              printerName: settingsRef.current.impressoraAutomatica,
+              error: null,
+            }
+          })
+        } else {
+          updatePrintStatus(pedido._id, {
+            status: 'failed',
+            lastAttemptAt: Date.now(),
+            printerName: settingsRef.current.impressoraAutomatica,
+            error: 'Falha ao enviar para a impressora.',
+          })
+        }
+        return printed
       }
 
       const w = window.open('', '_blank', 'width=380,height=700')
-      if (!w) { alert('Pop-up bloqueado! Permita pop-ups para este site.'); return }
+      if (!w) {
+        updatePrintStatus(pedido._id, {
+          status: 'failed',
+          lastAttemptAt: Date.now(),
+          error: 'Pop-up de impressão bloqueado.',
+        })
+        alert('Pop-up bloqueado! Permita pop-ups para este site.')
+        return false
+      }
       w.document.open()
       w.document.write(html)
       w.document.close()
@@ -850,8 +1102,19 @@ useEffect(() => {
         setTimeout(() => { w.focus(); w.print(); w.onafterprint = () => w.close() }, 200)
       }
       setTimeout(() => { if (!w.closed) { w.focus(); w.print() } }, 1500)
+      updatePrintStatus(pedido._id, (current) => {
+        const count = Number(current.count || 0) + 1
+        return {
+          status: count > 1 ? 'reprinted' : 'printed_manual',
+          count,
+          lastPrintedAt: Date.now(),
+          printerName: 'Impressão do sistema',
+          error: null,
+        }
+      })
+      return true
     },
-    [restaurantConfig, printWithFeedback]
+    [restaurantConfig, printWithFeedback, updatePrintStatus]
   )
 
   // ── Impressão de etiquetas de sacola ──────────────────────────────────────
@@ -913,6 +1176,7 @@ const handlePrintBagLabels = useCallback(
             `🛵 Entregador chamado! Ref: ${data.boxDelivery?.uuid?.slice(0, 8)}...`,
             'success'
           )
+          return data.boxDelivery || null
         } else {
           let errData = {}
           try {
@@ -931,12 +1195,14 @@ const handlePrintBagLabels = useCallback(
             isBalanceError ? 'error' : 'warning',
             isBalanceError ? 14000 : 10000
           )
+          return null
         }
       } catch (boxErr) {
         console.error('❌ Box Delivery erro:', boxErr)
         const errorMessage = boxErr?.message || 'Erro ao conectar com a transportadora.'
         setBoxDeliveryFailure({ message: errorMessage, at: Date.now() })
         addToast('❌ ' + errorMessage, 'error')
+        return null
       }
     },
     [boxDeliveryAtivo, addToast]
@@ -995,6 +1261,23 @@ const handlePrintBagLabels = useCallback(
         ? data.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
         : []
 
+      const deliveredOrderIds = new Set(
+        sorted.filter((pedido) => pedido.status === 'Entregue').map((pedido) => pedido._id)
+      )
+      if (deliveredOrderIds.size > 0) {
+        setPrintStatuses((current) => {
+          const next = { ...current }
+          let changed = false
+          deliveredOrderIds.forEach((orderId) => {
+            if (next[orderId]) {
+              delete next[orderId]
+              changed = true
+            }
+          })
+          return changed ? next : current
+        })
+      }
+
       const pedidosConfirmados = []
       const aguardandoPagamento = []
       const pagamentosRecusados = []
@@ -1032,7 +1315,7 @@ const handlePrintBagLabels = useCallback(
               'Novo Pedido Aceito!',
               'Pedido #' + pedido._id.slice(-4) + ' enviado para cozinha.'
             )
-            if (impressoraAutomatica) handlePrint(pedido)
+            if (impressoraAutomatica) handlePrint(pedido, { automatic: true })
             await callBoxDelivery(pedido)
             pedido.status = 'Em preparação'
           } catch (err) {
@@ -1104,7 +1387,7 @@ const handlePrintBagLabels = useCallback(
   const advanceStatus = useCallback(
     async (pedido) => {
       const nextStatus = getNextStatus(pedido.status)
-      if (!nextStatus) return
+      if (!nextStatus) return { success: false, deferred: false }
 
       // ✅ Intercepta ANTES de qualquer chamada — modal gerencia o avanço
       if (
@@ -1113,7 +1396,7 @@ const handlePrintBagLabels = useCallback(
         isDelivery(pedido)
       ) {
         setMotoboyModalTarget(pedido)
-        return
+        return { success: false, deferred: true }
       }
 
       setLoadingOrderId(pedido._id)
@@ -1125,12 +1408,79 @@ const handlePrintBagLabels = useCallback(
         await apiUpdateStatus(pedido._id, nextStatus)
         notifyOrderStatus(pedido, nextStatus, nexBotStatus)
 
+        let boxDeliveryDispatch = null
         if (nextStatus === 'Em preparação') {
-          if (settingsRef.current.impressoraAutomatica) handlePrint(pedido)
-          if (isDelivery(pedido)) await callBoxDelivery(pedido)
+          if (settingsRef.current.impressoraAutomatica) handlePrint(pedido, { automatic: true })
+          if (isDelivery(pedido)) boxDeliveryDispatch = await callBoxDelivery(pedido)
         }
 
         await fetchPedidos()
+        addToast(
+          getOrderAction(pedido)?.successLabel || 'Status do pedido atualizado.',
+          'success',
+          8000,
+          {
+            label: 'Desfazer',
+            onClick: async () => {
+              setLoadingOrderId(pedido._id)
+
+              try {
+                const currentRes = await apiFetch(
+                  `https://painel.nexfood.app/api/pedidos/${pedido._id}`
+                )
+                if (!currentRes.ok) {
+                  throw new Error(await getApiErrorMessage(currentRes, 'Não foi possível conferir o pedido.'))
+                }
+
+                const currentOrder = await currentRes.json()
+                if (currentOrder.status !== nextStatus) {
+                  addToast('O pedido já mudou de etapa e não pode mais ser desfeito.', 'warning')
+                  return false
+                }
+
+                const boxUuid = boxDeliveryDispatch?.uuid
+                if (boxUuid) {
+                  const cancelRes = await apiFetch(
+                    `https://painel.nexfood.app/api/pedidos/${pedido._id}/box-delivery/cancel`,
+                    {
+                      method: 'POST',
+                      body: JSON.stringify({ boxUuid }),
+                    }
+                  )
+                  if (!cancelRes.ok) {
+                    throw new Error(
+                      await getApiErrorMessage(
+                        cancelRes,
+                        'Não foi possível cancelar o entregador. O status não foi alterado.'
+                      )
+                    )
+                  }
+                }
+
+                await apiUpdateStatus(pedido._id, pedido.status)
+                setPedidos((prev) =>
+                  prev.map((item) =>
+                    item._id === pedido._id ? { ...item, status: pedido.status } : item
+                  )
+                )
+                await fetchPedidos()
+                addToast(
+                  boxUuid
+                    ? 'Alteração desfeita e chamada do entregador cancelada.'
+                    : 'Alteração de status desfeita.',
+                  'info'
+                )
+                return true
+              } catch (err) {
+                addToast(err?.message || 'Não foi possível desfazer a alteração.', 'error', 10000)
+                return false
+              } finally {
+                setLoadingOrderId(null)
+              }
+            },
+          }
+        )
+        return { success: true, deferred: false }
       } catch (err) {
         setPedidos((prev) =>
           prev.map((p) => p._id === pedido._id ? { ...p, status: pedido.status } : p)
@@ -1139,6 +1489,7 @@ const handlePrintBagLabels = useCallback(
           err?.message || 'Erro ao atualizar status. Verifique a conexão e tente novamente.',
           'error'
         )
+        return { success: false, deferred: false }
       } finally {
         setLoadingOrderId(null)
       }
@@ -1207,16 +1558,24 @@ const handlePrintBagLabels = useCallback(
 
     if (searchQuery.trim()) {
       const query = searchQuery.trim()
+      const normalizedQuery = query.toLowerCase()
+      const queryDigits = query.replace(/\D/g, '')
       resultado = resultado.filter((p) => {
+        const phoneDigits = String(p.cliente?.telefone || '').replace(/\D/g, '')
+        const directMatch =
+          String(getOrderNumber(p)).toLowerCase().includes(normalizedQuery) ||
+          String(p._id || '').toLowerCase().includes(normalizedQuery) ||
+          (queryDigits.length >= 3 && phoneDigits.endsWith(queryDigits))
         const searchText = [
-          p._id.slice(-4).toUpperCase(),
+          getOrderNumber(p),
+          p._id || '',
           p.cliente?.nome || '',
           p.cliente?.telefone || '',
           p.enderecoEntrega?.rua || '',
           p.enderecoEntrega?.bairro || '',
-          ...p.itens.map((i) => i.nome),
+          ...(p.itens || []).map((i) => i.nome),
         ].join(' ')
-        return fuzzyMatch(searchText, query)
+        return directMatch || fuzzyMatch(searchText, query)
       })
     }
 
@@ -1536,7 +1895,7 @@ const handlePrintBagLabels = useCallback(
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar por ID, cliente, telefone, endereço..."
+                  placeholder="Buscar por nº do pedido, cliente ou últimos dígitos do telefone..."
                   className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 transition-all"
                   aria-label="Buscar pedidos"
                 />
@@ -1716,7 +2075,7 @@ const handlePrintBagLabels = useCallback(
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar pedidos..."
+                placeholder="Pedido, cliente ou últimos dígitos do telefone..."
                 className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20"
                 aria-label="Buscar pedidos"
               />
@@ -1777,6 +2136,7 @@ const handlePrintBagLabels = useCallback(
                       onClick={() => setSelectedOrder(p)}
                       onAdvance={() => advanceStatus(p)}
                       onPrint={() => handlePrint(p)}
+                      printStatus={printStatuses[p._id]}
                       color="purple"
                       isLoading={loadingOrderId === p._id}
                       searchQuery={searchQuery}
@@ -1803,6 +2163,7 @@ const handlePrintBagLabels = useCallback(
                     onClick={() => setSelectedOrder(p)}
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
+                    printStatus={printStatuses[p._id]}
                     color="orange"
                     isLoading={loadingOrderId === p._id}
                     searchQuery={searchQuery}
@@ -1830,6 +2191,7 @@ const handlePrintBagLabels = useCallback(
                     onClick={() => setSelectedOrder(p)}
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
+                    printStatus={printStatuses[p._id]}
                     color="blue"
                     isLoading={loadingOrderId === p._id}
                     searchQuery={searchQuery}
@@ -1861,6 +2223,7 @@ const handlePrintBagLabels = useCallback(
                     pedido={p}
                     onClick={() => setSelectedOrder(p)}
                     onPrint={() => handlePrint(p)}
+                    printStatus={printStatuses[p._id]}
                     isDone
                     color="emerald"
                     searchQuery={searchQuery}
@@ -2371,6 +2734,10 @@ const handlePrintBagLabels = useCallback(
                     <span className="text-emerald-600 font-bold">NEX07</span>
                   </div>
                   <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
+                    <span className="text-gray-600">Versão:</span>
+                    <span className="text-gray-900 font-bold">v{packageInfo.version}</span>
+                  </div>
+                  <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
                     <span className="text-gray-600">CNPJ:</span>
                     <span className="text-gray-900 font-medium">63.805.056/0001-33</span>
                   </div>
@@ -2405,8 +2772,9 @@ const handlePrintBagLabels = useCallback(
           <OrderModal
             pedido={selectedOrder}
             onClose={() => setSelectedOrder(null)}
-            onPrint={() => handlePrint(selectedOrder)}
-            onAdvance={() => advanceStatus(selectedOrder)}
+            onPrint={(pedidoAtual) => handlePrint(pedidoAtual || selectedOrder)}
+            printStatus={printStatuses[selectedOrder._id]}
+            onAdvance={advanceStatus}
             onPrintBagLabels={(pedido) => setBagLabelTarget(pedido)}
             showBagLabels={settings.usarEtiquetasSacola}
             isLoading={loadingOrderId === selectedOrder._id}
@@ -2456,7 +2824,7 @@ const handlePrintBagLabels = useCallback(
         )}
 
         {/* Sistema de toasts */}
-         <ToastContainer toasts={toasts} />
+         <ToastContainer toasts={toasts} onDismiss={removeToast} />
 
         {/* Modal de quantidade de sacolas */}
         {bagLabelTarget && (
@@ -2776,6 +3144,7 @@ function OrderCard({
   onClick,
   onAdvance,
   onPrint,
+  printStatus,
   isDone,
   color,
   isLoading,
@@ -2796,6 +3165,11 @@ function OrderCard({
   const { minutes, isUrgent } = getTimeElapsed(pedido.createdAt)
   const estimatedMins = isDelivery(pedido) ? 40 : 15
   const countdown = useCountdown(pedido.createdAt, estimatedMins)
+  const discountInfo = getDiscountInfo(pedido)
+  const orderAction = getOrderAction(pedido)
+  const printInfo = getPrintStatusInfo(printStatus)
+  const paymentInfo = getPaymentInfo(pedido)
+  const hasObservation = hasOrderObservation(pedido)
 
   // Monta o tooltip do countdown com contexto claro para o operador
   const countdownTooltip = countdown.isLate
@@ -2807,7 +3181,8 @@ function OrderCard({
   // Highlight do termo buscado no texto do card
   const highlightText = (text) => {
     if (!searchQuery || !text) return text
-    const parts = text.split(new RegExp(`(${searchQuery})`, 'gi'))
+    const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const parts = String(text).split(new RegExp(`(${escapedQuery})`, 'gi'))
     return parts.map((part, i) =>
       part.toLowerCase() === searchQuery.toLowerCase() ? (
         <mark key={i} className="bg-yellow-200 px-0.5 rounded">
@@ -2818,17 +3193,6 @@ function OrderCard({
       )
     )
   }
-
-  const pagamentoLabel =
-    {
-      dinheiro: 'Dinheiro',
-      pix: 'Pix',
-      debito_maq: 'Maquininha',
-      cartao: 'Cartão',
-      online_card: 'Cartão Online',
-      pix_online: 'Pix Online',
-      mercadopago: 'Mercado Pago',
-    }[pedido.formaPagamento] || pedido.formaPagamento?.replace(/_/g, ' ')
 
   return (
     <div
@@ -2901,36 +3265,79 @@ function OrderCard({
         )}
       </div>
 
-      {/* Linha 3: Tipo + Pagamento */}
-      <div className="flex items-center gap-1.5 flex-wrap">
+      {/* Indicadores operacionais compactos */}
+      <div className="flex items-center gap-1 flex-wrap">
         <span
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] font-bold shrink-0 ${
             isDelivery(pedido)
-              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-              : 'bg-orange-50 text-orange-700 border border-orange-200'
+              ? 'bg-blue-50 text-blue-700 border-blue-200'
+              : 'bg-orange-50 text-orange-700 border-orange-200'
           }`}
         >
           <i
             className={`fas ${
               isDelivery(pedido) ? 'fa-motorcycle' : 'fa-store'
-            } text-[9px]`}
+            } text-[8px]`}
             aria-hidden="true"
           ></i>
           {getTipoPedidoLabel(pedido.tipo)}
         </span>
-        {pagamentoLabel && (
-          <>
-            <span className="text-[10px] text-gray-300" aria-hidden="true">
-              ·
-            </span>
-            <span className="text-[10px] text-gray-500 truncate">
-              {pagamentoLabel}
-              {pedido.trocoPara
-                ? ` · troco ${formatCurrency(pedido.trocoPara)}`
-                : ''}
-            </span>
-          </>
+
+        <span
+          className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-black ${paymentInfo.className}`}
+          title={paymentInfo.label}
+        >
+          <i className={`fas ${paymentInfo.icon} text-[8px]`} aria-hidden="true"></i>
+          <span className="truncate">{paymentInfo.shortLabel || paymentInfo.label}</span>
+        </span>
+
+        {hasObservation && (
+          <span
+            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9px] font-black text-amber-900"
+            title="Este pedido possui observação em um ou mais itens"
+          >
+            <i className="fas fa-comment-dots text-[8px]" aria-hidden="true"></i>
+            OBSERVAÇÃO
+          </span>
         )}
+
+        {discountInfo && (
+          <span
+            className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] ${
+              discountInfo.isCampaign
+                ? 'bg-violet-50 border-violet-200 text-violet-700'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            }`}
+            title={discountInfo.label}
+          >
+            <i className="fas fa-tag text-[8px]" aria-hidden="true"></i>
+            <span className="truncate font-bold">{discountInfo.shortLabel}</span>
+            <span className="shrink-0 font-black">-{formatCurrency(pedido.desconto)}</span>
+          </span>
+        )}
+
+        {!isDone && (printStatus?.status === 'failed' ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onPrint()
+            }}
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-black hover:brightness-95 ${printInfo.className}`}
+            title={`${printStatus?.error || printInfo.label}. Clique para tentar novamente.`}
+          >
+            <i className="fas fa-rotate text-[8px]" aria-hidden="true"></i>
+            {printInfo.shortLabel}
+          </button>
+        ) : (
+          <span
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-bold ${printInfo.className}`}
+            title={printInfo.label}
+          >
+            <i className={`fas ${printInfo.icon} text-[8px]`} aria-hidden="true"></i>
+            {printInfo.shortLabel}
+          </span>
+        ))}
       </div>
 
       {/* Linha 4: Endereço (só Delivery) */}
@@ -3058,12 +3465,16 @@ function OrderCard({
               e.stopPropagation()
               onPrint()
             }}
-            className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
-            title="Imprimir cupom"
-            aria-label="Imprimir cupom do pedido"
+            className={`rounded p-1.5 text-sm transition-colors focus:outline-none focus:ring-2 ${
+              printStatus?.status === 'failed'
+                ? 'bg-red-100 text-red-700 hover:bg-red-200 focus:ring-red-400/40'
+                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:ring-gray-400/40'
+            }`}
+            title={printStatus?.status === 'failed' ? 'Tentar imprimir novamente' : 'Imprimir cupom'}
+            aria-label={printStatus?.status === 'failed' ? 'Tentar imprimir o pedido novamente' : 'Imprimir cupom do pedido'}
             type="button"
           >
-            <i className="fas fa-print" aria-hidden="true"></i>
+            <i className={`fas ${printStatus?.status === 'failed' ? 'fa-rotate' : 'fa-print'}`} aria-hidden="true"></i>
           </button>
           <button
             onClick={(e) => {
@@ -3078,8 +3489,8 @@ function OrderCard({
             }`}
             aria-label={
               isLoading
-                ? 'Atualizando status...'
-                : `Avançar para ${getNextStatus(pedido.status) || 'próximo status'}`
+                ? orderAction?.loadingLabel || 'Atualizando status...'
+                : orderAction?.label || 'Atualizar pedido'
             }
             type="button"
           >
@@ -3087,9 +3498,9 @@ function OrderCard({
               <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
             ) : (
               <>
-                AVANÇAR{' '}
+                {orderAction?.shortLabel || 'ATUALIZAR'}{' '}
                 <i
-                  className="fas fa-arrow-right text-[10px] ml-1"
+                  className={`fas ${orderAction?.icon || 'fa-arrow-right'} text-[10px] ml-1`}
                   aria-hidden="true"
                 ></i>
               </>
@@ -3109,6 +3520,7 @@ function OrderModal({
   pedido,
   onClose,
   onPrint,
+  printStatus,
   onAdvance,
   onPrintBagLabels,
   showBagLabels,
@@ -3116,8 +3528,16 @@ function OrderModal({
   pedidos,
   onNavigate,
   restaurantAddress,
-}) {  
+}) {
   const [currentPedido, setCurrentPedido] = useState(pedido)
+  const discountInfo = getDiscountInfo(currentPedido)
+  const orderAction = getOrderAction(currentPedido)
+  const printInfo = getPrintStatusInfo(printStatus)
+  const modalPaymentInfo = getPaymentInfo(currentPedido)
+  const itemCount = (currentPedido.itens || []).reduce(
+    (total, item) => total + Number(item.quantidade || 0),
+    0
+  )
 
   // Focus trap com suporte a fechar via Escape
   const modalRef = useFocusTrap(true, onClose)
@@ -3216,6 +3636,12 @@ function OrderModal({
 
   const { minutes } = getTimeElapsed(currentPedido.createdAt)
 
+  const handleAdvance = async () => {
+    if (isLoading) return
+    const result = await onAdvance(currentPedido)
+    if (result?.success || result?.deferred) onClose()
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -3228,13 +3654,13 @@ function OrderModal({
       {/* Modal */}
       <div
         ref={modalRef}
-        className="relative w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-white/60 bg-white shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-titulo"
       >
         {/* Header */}
-        <div className="bg-gray-50 px-6 py-5 border-b">
+        <div className="shrink-0 border-b border-gray-200 bg-white px-5 py-4 lg:px-6">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-4">
               <div
@@ -3313,301 +3739,268 @@ function OrderModal({
           )}
         </div>
 
-        {/* Conteúdo scrollável */}
-        <div className="overflow-y-auto p-6 space-y-6 flex-1">
-          {/* Ação rápida: WhatsApp */}
-          {currentPedido.cliente?.telefone && (
-            <button
-              onClick={handleWhatsApp}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-lg font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-green-400/40"
-              type="button"
-            >
-              <i className="fab fa-whatsapp text-xl" aria-hidden="true"></i>
-              <span>
-                Conversar com {currentPedido.cliente.nome.split(' ')[0]} (
-                {currentPedido.cliente.telefone})
-              </span>
-            </button>
-          )}
-
-          {/* Lista de itens */}
-          <div className="space-y-3" role="list" aria-label="Itens do pedido">
-            {currentPedido.itens.map((item, idx) => (
-              <div
-                key={idx}
-                className="bg-gray-50 border rounded-lg p-4"
-                role="listitem"
-              >
-                <div className="flex gap-4 items-start">
-                  <div
-                    className="w-10 h-10 rounded-lg bg-[#7f22fe] flex items-center justify-center font-bold text-white shrink-0"
-                    aria-hidden="true"
-                  >
-                    {item.quantidade}x
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:grid lg:grid-cols-[340px_minmax(0,1fr)] lg:overflow-hidden">
+          <aside className="order-2 flex flex-none flex-col border-t border-gray-200 bg-slate-50 lg:order-1 lg:min-h-0 lg:border-r lg:border-t-0">
+            <div className="flex-1 space-y-3 p-4 custom-scrollbar lg:overflow-y-auto">
+              <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-[#7f22fe]">
+                    <i className="fas fa-user" aria-hidden="true"></i>
                   </div>
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="text-gray-900 font-semibold">{item.nome}</p>
-                      <p className="text-gray-900 font-bold">
-                        {formatCurrency(item.precoUnitario * item.quantidade)}
-                      </p>
-                    </div>
-                    {item.complementos?.length > 0 && (
-                      <div className="mt-1 space-y-0.5">
-                        {item.quantidade > 1 && (
-                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">
-                            cada unidade:
-                          </p>
-                        )}
-
-                        <p className="text-sm text-gray-600">
-                          + {item.complementos.join(', ')}
-                        </p>
-                      </div>
-                    )}
-                    {item.obs && (
-                      <div className="inline-flex items-center gap-2 text-sm bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-lg mt-2">
-                        <i
-                          className="fas fa-sticky-note"
-                          aria-hidden="true"
-                        ></i>
-                        {item.obs}
-                      </div>
-                    )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-bold text-gray-900">
+                      {currentPedido.cliente?.nome || 'Consumidor'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {currentPedido.cliente?.telefone || 'Telefone não informado'}
+                    </p>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+                {currentPedido.cliente?.telefone && (
+                  <button
+                    onClick={handleWhatsApp}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 py-2 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
+                    type="button"
+                  >
+                    <i className="fab fa-whatsapp text-base" aria-hidden="true"></i>
+                    Conversar no WhatsApp
+                  </button>
+                )}
+              </section>
 
-          {/* Entrega + Pagamento */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Entrega */}
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-5">
-              <h3 className="font-bold text-blue-900 uppercase text-sm mb-4 flex items-center gap-2">
-                <i className="fas fa-map-marker-alt" aria-hidden="true"></i>{' '}
-                Entrega
-              </h3>
-
-              {currentPedido.enderecoEntrega ? (
-                <>
-                  <p className="text-gray-900 font-semibold text-sm">
-                    {currentPedido.enderecoEntrega.rua},{' '}
-                    {currentPedido.enderecoEntrega.numero}
-                  </p>
-                  <p className="text-gray-600 text-sm mb-3">
-                    {currentPedido.enderecoEntrega.bairro} -{' '}
-                    {currentPedido.enderecoEntrega.cidade}
-                  </p>
-                  <div className="space-y-2">
-                    <button
-                      onClick={openGoogleMaps}
-                      className="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/40"
-                      type="button"
-                    >
-                      <i
-                        className="fas fa-map-marked-alt mr-2"
-                        aria-hidden="true"
-                      ></i>
-                      Ver no Mapa
-                    </button>
-
-                    {currentPedido.clusterId && clusterOrders.length > 1 && (
+              <section className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
+                <h3 className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-blue-900">
+                  <i className={`fas ${currentPedido.enderecoEntrega ? 'fa-location-dot' : 'fa-store'}`} aria-hidden="true"></i>
+                  {currentPedido.enderecoEntrega ? 'Entrega' : 'Retirada'}
+                </h3>
+                {currentPedido.enderecoEntrega ? (
+                  <>
+                    <p className="text-sm font-bold leading-snug text-gray-900">
+                      {currentPedido.enderecoEntrega.rua}, {currentPedido.enderecoEntrega.numero}
+                    </p>
+                    <p className="mt-0.5 text-xs text-gray-600">
+                      {currentPedido.enderecoEntrega.bairro}
+                      {currentPedido.enderecoEntrega.cidade
+                        ? ` · ${currentPedido.enderecoEntrega.cidade}`
+                        : ''}
+                    </p>
+                    <div className="mt-3 flex gap-2">
                       <button
-                        onClick={createClusterRoute}
-                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+                        onClick={openGoogleMaps}
+                        className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
                         type="button"
                       >
-                        <i
-                          className="fas fa-route mr-2"
-                          aria-hidden="true"
-                        ></i>
-                        Criar Rota ({clusterOrders.length} pedidos)
+                        <i className="fas fa-map mr-1.5" aria-hidden="true"></i>
+                        Mapa
                       </button>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center gap-2 text-gray-700 bg-white p-3 rounded border border-blue-100">
-                  <i className="fas fa-store" aria-hidden="true"></i>
-                  <span className="font-medium">Retirada no Balcão</span>
-                </div>
-              )}
-
-              {/* Lista de pedidos próximos do cluster */}
-              {currentPedido.clusterId &&
-                currentPedido.clusterDistances?.length > 0 && (
-                  <div className="mt-4 bg-white rounded-lg p-4 border border-blue-200">
-                    <p className="text-sm font-bold text-blue-900 mb-3 flex items-center gap-2">
-                      <i className="fas fa-route" aria-hidden="true"></i>
-                      Outros Pedidos da Rota:
-                    </p>
-                    <div className="space-y-2 max-h-40 overflow-y-auto">
-                      {currentPedido.clusterDistances.map((nearby, idx) => (
+                      {currentPedido.clusterId && clusterOrders.length > 1 && (
                         <button
-                          key={idx}
-                          onClick={() => navigateToOrder(nearby.orderId)}
-                          className="w-full flex items-center justify-between p-2 rounded bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+                          onClick={createClusterRoute}
+                          className="flex-1 rounded-lg border border-blue-300 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
                           type="button"
-                          aria-label={`Ver pedido #${nearby.orderNumber} a ${nearby.distance.toFixed(1)}km`}
                         >
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="w-6 h-6 rounded-full bg-blue-500 text-white text-sm font-bold flex items-center justify-center shrink-0"
-                              aria-hidden="true"
-                            >
-                              {idx + 1}
-                            </div>
-                            <div>
-                              <p className="text-sm font-bold text-blue-900">
-                                #{nearby.orderNumber}
-                              </p>
-                              <p className="text-xs text-gray-600 truncate max-w-[150px]">
-                                {nearby.address}
-                              </p>
-                            </div>
-                          </div>
-                          <span className="text-sm font-bold bg-blue-500 text-white px-2 py-1 rounded shrink-0">
-                            {nearby.distance.toFixed(1)}km
+                          <i className="fas fa-route mr-1.5" aria-hidden="true"></i>
+                          Rota
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm font-bold text-gray-800">Retirada no balcão</p>
+                )}
+
+                {currentPedido.clusterId && currentPedido.clusterDistances?.length > 0 && (
+                  <div className="mt-3 border-t border-blue-200 pt-3">
+                    <p className="mb-2 text-[10px] font-black uppercase tracking-wide text-blue-800">
+                      Pedidos da rota
+                    </p>
+                    <div className="space-y-1.5">
+                      {currentPedido.clusterDistances.map((nearby) => (
+                        <button
+                          key={nearby.orderId}
+                          onClick={() => navigateToOrder(nearby.orderId)}
+                          className="flex w-full items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-2 text-left text-blue-900 hover:bg-blue-100"
+                          type="button"
+                          aria-label={`Ver pedido #${nearby.orderNumber} a ${nearby.distance.toFixed(1)} km`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-xs font-black">#{nearby.orderNumber}</span>
+                            <span className="block truncate text-[10px] font-medium text-blue-700">
+                              {nearby.address}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-xs font-bold">
+                            {nearby.distance.toFixed(1)} km
                           </span>
                         </button>
                       ))}
                     </div>
                   </div>
                 )}
-            </div>
+              </section>
 
-            {/* Pagamento */}
-            <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-5">
-              <h3 className="font-bold text-emerald-900 uppercase text-sm mb-4 flex items-center gap-2">
-                <i className="fas fa-wallet" aria-hidden="true"></i> Pagamento
-              </h3>
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between text-gray-700">
-                  <span>Subtotal</span>
-                  <span className="font-semibold">
-                    {formatCurrency(currentPedido.subtotal)}
-                  </span>
-                </div>
-                {/* ← linha nova */}
-                {currentPedido.taxaEntrega > 0 && (
-                  <div className="flex justify-between text-gray-700">
-                    <span className="flex items-center gap-1.5">
-                      <i className="fas fa-motorcycle text-gray-400 text-xs" aria-hidden="true"></i>
-                      Taxa de Entrega
-                    </span>
-                    <span className="font-semibold">{formatCurrency(currentPedido.taxaEntrega)}</span>
-                  </div>
-                )}
-                {currentPedido.desconto > 0 && (
-                  <div className="flex justify-between text-emerald-700">
-                    <span>Desconto</span>
-                    <span className="font-semibold">
-                      -{formatCurrency(currentPedido.desconto)}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between text-gray-900 font-bold text-xl pt-3 border-t border-emerald-200">
-                  <span>Total</span>
-                  <span className="text-[#7f22fe]">
-                    {formatCurrency(currentPedido.total)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-center gap-3 p-3 rounded-lg bg-white border border-emerald-200">
-                  <span className="text-xs uppercase font-bold">
-                    {({
-                      dinheiro: 'Dinheiro',
-                      pix: 'Pix na Entrega',
-                      debito_maq: 'Maquininha',
-                      cartao: 'Cartão na Entrega',
-                      online_card: 'Cartão Online',
-                      pix_online: 'Pix Online',
-                      mercadopago: 'Mercado Pago',
-                    })[currentPedido.formaPagamento] ||
-                      currentPedido.formaPagamento?.replace(/_/g, ' ')}
-                  </span>
+              <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-emerald-800">
+                    <i className="fas fa-wallet" aria-hidden="true"></i>
+                    Pagamento
+                  </h3>
                   <span
-                    className={`text-sm font-bold px-2 py-1 rounded ${
-                      currentPedido.statusPagamento === 'aprovado'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-yellow-100 text-yellow-700'
-                    }`}
+                    className={`rounded-full border px-2 py-1 text-[9px] font-black ${modalPaymentInfo.className}`}
+                    title={modalPaymentInfo.label}
                   >
-                    {currentPedido.statusPagamento?.toUpperCase()}
+                    {modalPaymentInfo.shortLabel || modalPaymentInfo.label}
                   </span>
                 </div>
-                {currentPedido.trocoPara && (
-                  <p className="text-sm text-gray-600 text-center">
-                    Troco para:{' '}
-                    <strong>{formatCurrency(currentPedido.trocoPara)}</strong>
-                  </p>
-                )}
-              </div>
+                <div className="space-y-2 text-xs text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <strong className="text-gray-800">{formatCurrency(currentPedido.subtotal)}</strong>
+                  </div>
+                  {currentPedido.taxaEntrega > 0 && (
+                    <div className="flex justify-between">
+                      <span>Taxa de entrega</span>
+                      <strong className="text-gray-800">{formatCurrency(currentPedido.taxaEntrega)}</strong>
+                    </div>
+                  )}
+                  {currentPedido.desconto > 0 && (
+                    <div className="rounded-lg bg-emerald-50 p-2 text-emerald-800">
+                      <div className="flex justify-between font-bold">
+                        <span>Desconto</span>
+                        <span>-{formatCurrency(currentPedido.desconto)}</span>
+                      </div>
+                      {discountInfo && <p className="mt-1 text-[10px]">{discountInfo.label}</p>}
+                    </div>
+                  )}
+                  <div className="flex items-end justify-between border-t border-gray-200 pt-3">
+                    <span className="font-bold text-gray-900">Total</span>
+                    <strong className="text-2xl leading-none text-[#7f22fe]">
+                      {formatCurrency(currentPedido.total)}
+                    </strong>
+                  </div>
+                  {currentPedido.trocoPara && (
+                    <div className="rounded-lg bg-blue-50 px-2.5 py-2 text-center font-bold text-blue-800">
+                      Troco para {formatCurrency(currentPedido.trocoPara)}
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
-          </div>
-        </div>
 
-        {/* Footer com ações */}
-        <div className="bg-gray-50 p-6 border-t">
-          {showBagLabels ? (
-            <div className="space-y-3">
-              <div className="flex gap-3">
+            <div className="shrink-0 border-t border-gray-200 bg-white p-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
+              {currentPedido.status !== 'Entregue' && (
+                <div className={`mb-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-[10px] font-bold ${printInfo.className}`}>
+                  <i className={`fas ${printInfo.icon}`} aria-hidden="true"></i>
+                  <span>{printInfo.label}</span>
+                  {printStatus?.lastPrintedAt && (
+                    <span className="ml-auto font-medium opacity-70">
+                      {formatTime(printStatus.lastPrintedAt)}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-2">
                 <button
                   onClick={() => onPrint(currentPedido)}
-                  className="flex-1 py-3.5 rounded-lg bg-white hover:bg-gray-100 border-2 border-gray-300 font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+                  disabled={isLoading}
+                  className="flex-1 rounded-xl border border-gray-300 bg-white py-3 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                   type="button"
                 >
-                  <i className="fas fa-print mr-2" aria-hidden="true"></i>Imprimir
+                  <i className={`fas ${printStatus?.status === 'failed' ? 'fa-rotate' : 'fa-print'} mr-1.5`} aria-hidden="true"></i>
+                  {printStatus?.status === 'failed' ? 'Tentar' : 'Imprimir'}
                 </button>
-                <button
-                  onClick={() => onPrintBagLabels(currentPedido)}
-                  className="flex-1 py-3.5 rounded-lg bg-white hover:bg-purple-50 border-2 border-[#7f22fe]/40 hover:border-[#7f22fe] text-[#7f22fe] font-bold transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
-                  type="button"
-                  title="Imprimir etiquetas identificadoras para cada sacola do pedido"
-                >
-                  <i className="fas fa-shopping-bag mr-2" aria-hidden="true"></i>Sacolas
-                </button>
+                {showBagLabels && (
+                  <button
+                    onClick={() => onPrintBagLabels(currentPedido)}
+                    disabled={isLoading}
+                    className="flex-1 rounded-xl border border-violet-200 bg-violet-50 py-3 text-xs font-bold text-[#7f22fe] hover:bg-violet-100 disabled:opacity-50"
+                    type="button"
+                  >
+                    <i className="fas fa-shopping-bag mr-1.5" aria-hidden="true"></i>
+                    Sacolas
+                  </button>
+                )}
               </div>
               {currentPedido.status !== 'Entregue' && (
                 <button
-                  onClick={() => { onAdvance(currentPedido); onClose() }}
+                  onClick={handleAdvance}
                   disabled={isLoading}
-                  className={`w-full py-4 rounded-lg font-bold text-white transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#7f22fe] hover:bg-[#6b1de0]'}`}
+                  className={`mt-2 w-full rounded-xl py-3.5 text-sm font-black text-white transition-colors ${
+                    isLoading ? 'cursor-not-allowed bg-gray-400' : 'bg-[#7f22fe] hover:bg-[#6b1de0]'
+                  }`}
                   type="button"
-                  aria-label={isLoading ? 'Avançando...' : `Avançar para ${getNextStatus(currentPedido.status) || 'próxima etapa'}`}
+                  aria-label={isLoading ? orderAction?.loadingLabel : orderAction?.label}
                 >
-                  {isLoading
-                    ? <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
-                    : <><i className="fas fa-arrow-right mr-2" aria-hidden="true"></i>Avançar Etapa</>
-                  }
+                  {isLoading ? (
+                    <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
+                  ) : (
+                    <>
+                      <i className={`fas ${orderAction?.icon || 'fa-arrow-right'} mr-2`} aria-hidden="true"></i>
+                      {orderAction?.label || 'Atualizar pedido'}
+                    </>
+                  )}
                 </button>
               )}
             </div>
-          ) : (
-            <div className="flex gap-3">
-              <button
-                onClick={() => onPrint(currentPedido)}
-                className="flex-1 py-4 rounded-lg bg-white hover:bg-gray-100 border-2 border-gray-300 font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
-                type="button"
-              >
-                <i className="fas fa-print mr-2" aria-hidden="true"></i>Imprimir
-              </button>
-              {currentPedido.status !== 'Entregue' && (
-                <button
-                  onClick={() => { onAdvance(currentPedido); onClose() }}
-                  disabled={isLoading}
-                  className={`flex-[2] py-4 rounded-lg font-bold text-white transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#7f22fe] hover:bg-[#6b1de0]'}`}
-                  type="button"
-                  aria-label={isLoading ? 'Avançando...' : `Avançar para ${getNextStatus(currentPedido.status) || 'próxima etapa'}`}
-                >
-                  {isLoading
-                    ? <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
-                    : <><i className="fas fa-arrow-right mr-2" aria-hidden="true"></i>Avançar Etapa</>
-                  }
-                </button>
+          </aside>
+
+          <section className="order-1 flex min-h-[45vh] flex-none flex-col bg-gray-50/70 lg:order-2 lg:min-h-0">
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-5 py-3">
+              <div>
+                <h3 className="font-black text-gray-900">Itens do pedido</h3>
+                <p className="text-xs text-gray-500">
+                  {itemCount} {itemCount === 1 ? 'item' : 'itens'} em {(currentPedido.itens || []).length} {(currentPedido.itens || []).length === 1 ? 'produto' : 'produtos'}
+                </p>
+              </div>
+              {hasOrderObservation(currentPedido) && (
+                <span className="rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-[10px] font-black text-amber-900">
+                  <i className="fas fa-comment-dots mr-1.5" aria-hidden="true"></i>
+                  TEM OBSERVAÇÃO
+                </span>
               )}
             </div>
-          )}
+            <div className="flex-1 space-y-3 p-4 custom-scrollbar lg:overflow-y-auto lg:p-5" role="list" aria-label="Itens do pedido">
+              {(currentPedido.itens || []).map((item, idx) => (
+                <article
+                  key={idx}
+                  className={`rounded-2xl border bg-white p-4 shadow-sm ${
+                    item.obs ? 'border-amber-300 ring-1 ring-amber-100' : 'border-gray-200'
+                  }`}
+                  role="listitem"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#7f22fe] text-sm font-black text-white shadow-sm">
+                      {item.quantidade}x
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-4">
+                        <p className="font-bold leading-snug text-gray-900">{item.nome}</p>
+                        <p className="shrink-0 font-black text-gray-900">
+                          {formatCurrency(item.precoUnitario * item.quantidade)}
+                        </p>
+                      </div>
+                      {item.complementos?.length > 0 && (
+                        <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                          {item.quantidade > 1 && (
+                            <span className="mr-1 text-[10px] font-black uppercase tracking-wide text-gray-400">
+                              Cada unidade:
+                            </span>
+                          )}
+                          + {item.complementos.join(', ')}
+                        </div>
+                      )}
+                      {item.obs && (
+                        <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900">
+                          <i className="fas fa-comment-dots mt-0.5" aria-hidden="true"></i>
+                          <span>{item.obs}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -3623,8 +4016,9 @@ function OrderModal({
 //    → o operador vê exatamente quanto tempo ainda tem para ler
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Toast({ toast }) {
+function Toast({ toast, onDismiss }) {
   const [progress, setProgress] = useState(100)
+  const [actionLoading, setActionLoading] = useState(false)
 
   useEffect(() => {
     const duration = toast.duration || 6000
@@ -3645,10 +4039,35 @@ function Toast({ toast }) {
   }
   const s = styles[toast.type] || styles.info
 
+  const handleAction = async () => {
+    if (!toast.action?.onClick || actionLoading) return
+    setActionLoading(true)
+    try {
+      const completed = await toast.action.onClick()
+      if (completed !== false) onDismiss(toast.id)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   return (
     <div className={`relative overflow-hidden flex items-start gap-3 p-4 rounded-xl border shadow-xl text-sm font-medium ${s.box}`}>
       <i className={`fas ${s.icon} mt-0.5 shrink-0 text-base`} aria-hidden="true"></i>
       <span className="flex-1 leading-relaxed">{toast.message}</span>
+      {toast.action && (
+        <button
+          type="button"
+          onClick={handleAction}
+          disabled={actionLoading}
+          className="shrink-0 rounded-lg border border-current/30 px-3 py-1.5 text-xs font-black hover:bg-black/5 disabled:opacity-50"
+        >
+          {actionLoading ? (
+            <i className="fas fa-spinner fa-spin" aria-label="Processando"></i>
+          ) : (
+            toast.action.label
+          )}
+        </button>
+      )}
       {/* Barra de progresso com valor real — não é apenas animação CSS */}
       <div
         className={`absolute bottom-0 left-0 h-1 rounded-b-xl transition-none ${s.bar}`}
@@ -3662,7 +4081,7 @@ function Toast({ toast }) {
   )
 }
 
-function ToastContainer({ toasts }) {
+function ToastContainer({ toasts, onDismiss }) {
   return (
     <div
       className="fixed bottom-5 right-5 z-[200] flex flex-col gap-3 max-w-sm pointer-events-none"
@@ -3672,7 +4091,7 @@ function ToastContainer({ toasts }) {
     >
       {toasts.map(toast => (
         <div key={toast.id} className="pointer-events-auto">
-          <Toast toast={toast} />
+          <Toast toast={toast} onDismiss={onDismiss} />
         </div>
       ))}
     </div>

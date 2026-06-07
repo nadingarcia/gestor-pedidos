@@ -17,5 +17,7 @@ export const PEDIDO_TESTE_IMPRESSAO = {
     { nome: 'Refrigerante Lata', quantidade: 1, precoUnitario: 6.00, complementos: [], obs: '' },
   ],
   subtotal: 62.90, desconto: 6.00, total: 56.90,
+  origemDesconto: 'CAMPANHA',
+  campanha: { nome: 'Instagram Junho', codigo: 'instagram-junho', valorDesconto: 10 },
   formaPagamento: 'pix', statusPagamento: 'aprovado', trocoPara: null,
 }
