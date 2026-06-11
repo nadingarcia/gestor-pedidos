@@ -26,6 +26,7 @@ autoUpdater.autoInstallOnAppQuit = true
 app.disableHardwareAcceleration()
 
 let mainWindow
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 const autoLauncher = new AutoLaunch({
   name: 'Gestor de Pedidos NexFood',
@@ -71,6 +72,25 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (app.isReady()) createWindow()
+    return
+  }
+
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  mainWindow.focus()
+  mainWindow.flashFrame(false)
+}
+
+if (hasSingleInstanceLock) {
+  app.on('second-instance', () => {
+    log.info('Segunda instância bloqueada; focando a janela principal.')
+    showMainWindow()
   })
 }
 
@@ -285,15 +305,7 @@ ipcMain.handle('send-notification', async (event, { title, body }) => {
         icon: path.join(__dirname, '../public/logo.png'),
       })
       notification.on('click', () => {
-        if (!mainWindow || mainWindow.isDestroyed()) {
-          createWindow()
-          return
-        }
-
-        if (mainWindow.isMinimized()) mainWindow.restore()
-        if (!mainWindow.isVisible()) mainWindow.show()
-        mainWindow.focus()
-        mainWindow.flashFrame(false)
+        showMainWindow()
       })
       notification.show()
       return { success: true }
@@ -311,7 +323,11 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding')
 app.commandLine.appendSwitch('disable-background-timer-throttling')
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 
-app.whenReady().then(createWindow)
+if (hasSingleInstanceLock) {
+  app.whenReady().then(createWindow)
+} else {
+  app.quit()
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
