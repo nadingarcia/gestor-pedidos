@@ -1057,7 +1057,11 @@ useEffect(() => {
     if (electronAPI?.isElectron?.()) {
       electronAPI.sendNotification(title, body)
     } else if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, { body, icon: '/logo.png' })
+      const notification = new Notification(title, { body, icon: '/logo.png' })
+      notification.onclick = () => {
+        window.focus()
+        notification.close()
+      }
     }
   }, [])
 

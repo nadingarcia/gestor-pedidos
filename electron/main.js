@@ -284,6 +284,17 @@ ipcMain.handle('send-notification', async (event, { title, body }) => {
         body,
         icon: path.join(__dirname, '../public/logo.png'),
       })
+      notification.on('click', () => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          createWindow()
+          return
+        }
+
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        if (!mainWindow.isVisible()) mainWindow.show()
+        mainWindow.focus()
+        mainWindow.flashFrame(false)
+      })
       notification.show()
       return { success: true }
     } else {
