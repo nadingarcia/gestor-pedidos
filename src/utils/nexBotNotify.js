@@ -4,6 +4,7 @@
 // falhas silenciosas no envio do WhatsApp.
 
 import { apiFetch } from '@utils/apiFetch'; // <-- Importando o apiFetch
+import { isDelivery } from '@utils/orderType'
 
 const BOT_URL = "https://lizanimiranda.com.br"
 
@@ -50,7 +51,7 @@ export async function notifyOrderStatus(pedido, novoStatus, botStatus = 'offline
         nomeCliente:     pedido?.cliente?.nome || '',
         numeroPedido:    pedido.numeroPedido   || pedido._id?.slice(-4).toUpperCase(),
         status:          statusBackend,
-        tipoEntrega:     pedido?.tipoEntrega   || 'DELIVERY',
+        tipoEntrega:     isDelivery(pedido) ? 'DELIVERY' : 'RETIRADA',
         pedidoId:        pedido._id,
         temMotoboy:      pedido?.temMotoboy    || false, // ✅ true quando motoboy atribuído
       }),

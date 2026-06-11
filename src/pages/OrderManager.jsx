@@ -290,6 +290,12 @@ const getOrderAction = (pedido) => {
 const getPrintStatusInfo = (printStatus) => {
   const status = printStatus?.status || 'not_printed'
   const options = {
+    printing: {
+      label: 'Imprimindo...',
+      shortLabel: 'IMPRIMINDO',
+      icon: 'fa-spinner fa-spin',
+      className: 'bg-violet-50 border-violet-200 text-violet-700',
+    },
     not_printed: {
       label: 'Não impresso',
       shortLabel: 'NÃO IMP.',
@@ -525,11 +531,32 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
 
   const { fonteTamanho = 12, negritar = false } = printConfig
   const discountInfo = getDiscountInfo(pedido)
+  const restauranteNomeHtml = escapeHtml(nomeRestaurante)
+  const restauranteEnderecoHtml = escapeHtml(enderecoRestaurante)
+  const cnpjHtml = escapeHtml(cnpjFormatado)
+  const numeroPedidoHtml = escapeHtml(getOrderNumber(pedido))
+  const clienteNomeHtml = escapeHtml(pedido.cliente?.nome || 'Consumidor')
+  const clienteTelefoneHtml = escapeHtml(pedido.cliente?.telefone || '')
+  const totalPedidosClienteHtml = escapeHtml(pedido.cliente?.totalPedidos || 0)
+  const formaPagamento =
+    {
+      dinheiro: 'Dinheiro',
+      pix: 'Pix na Entrega',
+      debito_maq: 'Maquininha',
+      cartao: 'Cartão na Entrega',
+      online_card: 'Cartão Online',
+      pix_online: 'Pix Online',
+      mercadopago: 'Mercado Pago',
+    }[pedido.formaPagamento] ||
+    pedido.formaPagamento?.replace(/_/g, ' ').toUpperCase() ||
+    'Não informado'
+  const formaPagamentoHtml = escapeHtml(formaPagamento)
 
   // Escala proporcional derivada do tamanho base escolhido
   const t = {
     base:  `${fonteTamanho}px`,
     title: `${Math.round(fonteTamanho * 1.35)}px`,
+    order: `${Math.max(18, fonteTamanho)}px`,
     lg:    `${Math.round(fonteTamanho * 1.1)}px`,
     total: `${Math.round(fonteTamanho * 1.45)}px`,
     sm:    `${Math.max(9, fonteTamanho - 1)}px`,
@@ -543,18 +570,21 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
   const itensHtml = pedido.itens
     .map((item) => {
       const totalItem = item.precoUnitario * item.quantidade
-      const nomeItem = item.nome.replace(/\s*\(padrão\)/gi, '').trim()
+      const quantidadeHtml = escapeHtml(item.quantidade)
+      const nomeItem = escapeHtml(
+        String(item.nome || '').replace(/\s*\(padrão\)/gi, '').trim()
+      )
       const complementosHtml = item.complementos?.length
       ? `${item.quantidade > 1 ? '<div class="complementos-label">cada un.:</div>' : ''}
-        <div class="complementos">${item.complementos.map(c => `+ ${c}`).join('<br/>')}</div>`
+        <div class="complementos">${item.complementos.map(c => `+ ${escapeHtml(c)}`).join('<br/>')}</div>`
       : ''
       const obsHtml = item.obs
-        ? `<div class="obs"><strong>OBS:</strong> ${item.obs}</div>`
+        ? `<div class="obs"><strong>OBS:</strong> ${escapeHtml(item.obs)}</div>`
         : ''
       return `
         <div class="item-row">
           <div class="item-header">
-            <span class="qty">${item.quantidade}x</span>
+            <span class="qty">${quantidadeHtml}x</span>
             <span class="name">${nomeItem}</span>
             <span class="item-price">${formatCurrency(totalItem)}</span>
           </div>
@@ -573,6 +603,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           :root {
             --fs-base:  ${t.base};
             --fs-title: ${t.title};
+            --fs-order: ${t.order};
             --fs-lg:    ${t.lg};
             --fs-total: ${t.total};
             --fs-sm:    ${t.sm};
@@ -604,6 +635,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           .title        { font-size: var(--fs-title); font-weight: var(--fw-heavy); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 1px; }
           .restaurant-address { font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; margin-bottom: 6px; }
           .subtitle     { font-size: var(--fs-base); font-weight: var(--fw-bold); color: #000; border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
+          .order-number { display: block; font-size: var(--fs-order); font-weight: var(--fw-heavy); line-height: 1.15; margin-top: 3px; }
           .info-group   { margin-bottom: 8px; }
           .info-label   { font-size: var(--fs-sm); text-transform: uppercase; font-weight: var(--fw-heavy); color: #000; border-bottom: 1px solid #000; margin-bottom: 3px; }
           .info-value   { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: #000; }
@@ -623,33 +655,34 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           .total-big    { font-size: var(--fs-total); font-weight: var(--fw-heavy); margin-top: 5px; color: #000; }
           .payment-box  { border: 2px solid #000; padding: 5px; margin-top: 8px; text-align: center; font-weight: var(--fw-heavy); font-size: var(--fs-lg); color: #000; }
           .footer       { margin-top: 8px; margin-bottom: 0; text-align: center; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; border-top: 2px dashed #000; padding-top: 6px; padding-bottom: 4px; }
+          .footer-brand { font-size: var(--fs-xs); }
           .fiel         { font-size: var(--fs-sm); font-weight: var(--fw-heavy); color: #000; margin-top: 2px; }
         </style>
       </head>
       <body>
         <div class="text-center">
-          <div class="title">${nomeRestaurante}</div>
-          ${cnpjFormatado ? `<div class="restaurant-address">CNPJ ${cnpjFormatado}</div>` : ''}
-          ${enderecoRestaurante ? `<div class="restaurant-address">${enderecoRestaurante}</div>` : ''}
+          <div class="title">${restauranteNomeHtml}</div>
+          ${cnpjFormatado ? `<div class="restaurant-address">CNPJ ${cnpjHtml}</div>` : ''}
+          ${enderecoRestaurante ? `<div class="restaurant-address">${restauranteEnderecoHtml}</div>` : ''}
           <div class="subtitle">
             ${formatDate(pedido.createdAt)} — ${formatTime(pedido.createdAt)}<br/>
-            PEDIDO #${getOrderNumber(pedido)}
+            <span class="order-number">PEDIDO #${numeroPedidoHtml}</span>
           </div>
         </div>
 
         <div class="info-group">
           <div class="info-label">Cliente</div>
-          <div class="info-value">${pedido.cliente?.nome || 'Consumidor'}</div>
-          ${pedido.cliente?.telefone ? `<div class="info-sub">Tel: ${pedido.cliente.telefone}</div>` : ''}
-          ${pedido.cliente?.totalPedidos > 0 ? `<div class="fiel">★ Cliente Fiel (${pedido.cliente.totalPedidos}º pedido)</div>` : ''}
+          <div class="info-value">${clienteNomeHtml}</div>
+          ${pedido.cliente?.telefone ? `<div class="info-sub">Tel: ${clienteTelefoneHtml}</div>` : ''}
+          ${pedido.cliente?.totalPedidos > 0 ? `<div class="fiel">★ Cliente Fiel (${totalPedidosClienteHtml}º pedido)</div>` : ''}
         </div>
 
         ${isDelivery(pedido) && pedido.enderecoEntrega ? `
           <div class="info-group">
             <div class="info-label">Entrega</div>
-            <div class="info-value">${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}</div>
-            <div class="info-sub">${pedido.enderecoEntrega.bairro} — ${pedido.enderecoEntrega.cidade}</div>
-            ${pedido.enderecoEntrega.complemento ? `<div class="info-sub">Comp: ${pedido.enderecoEntrega.complemento}</div>` : ''}
+            <div class="info-value">${escapeHtml(pedido.enderecoEntrega.rua)}, ${escapeHtml(pedido.enderecoEntrega.numero)}</div>
+            <div class="info-sub">${escapeHtml(pedido.enderecoEntrega.bairro)} — ${escapeHtml(pedido.enderecoEntrega.cidade)}</div>
+            ${pedido.enderecoEntrega.complemento ? `<div class="info-sub">Comp: ${escapeHtml(pedido.enderecoEntrega.complemento)}</div>` : ''}
           </div>
         ` : `<div class="payment-box">★ RETIRADA NO BALCÃO ★</div>`}
 
@@ -665,18 +698,15 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
 
         <div class="divider"></div>
         <div class="info-label">Pagamento</div>
-        <div class="info-value">${
-          { dinheiro: 'Dinheiro', pix: 'Pix na Entrega', debito_maq: 'Maquininha',
-            cartao: 'Cartão na Entrega', online_card: 'Cartão Online',
-            pix_online: 'Pix Online', mercadopago: 'Mercado Pago' }[pedido.formaPagamento]
-          || pedido.formaPagamento?.replace(/_/g, ' ').toUpperCase()
-        }</div>
+        <div class="info-value">${formaPagamentoHtml}</div>
         ${pedido.trocoPara ? `<div class="info-sub">Troco para: ${formatCurrency(pedido.trocoPara)}</div>` : ''}
 
         <div class="footer">
-          ${nomeRestaurante} • Obrigado pela preferência!<br/>
-          NEXFOOD - Tecnologia para Delivery<br/>
-          NEX07 • CNPJ 63.805.056/0001-33
+          ${restauranteNomeHtml} • Obrigado pela preferência!<br/>
+          <span class="footer-brand">
+            NEXFOOD - Tecnologia para Delivery<br/>
+            NEX07 • CNPJ 63.805.056/0001-33
+          </span>
         </div>
       </body>
     </html>
@@ -689,13 +719,16 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
 
 export const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConfig = {}) => {
   const { nome: nomeRestaurante = 'Restaurante' } = restaurantConfig
-  const orderNum = getOrderNumber(pedido)
-  const clienteNome = pedido.cliente?.nome || 'Consumidor'
+  const restauranteNomeHtml = escapeHtml(nomeRestaurante)
+  const orderNumHtml = escapeHtml(getOrderNumber(pedido))
+  const clienteNomeHtml = escapeHtml(pedido.cliente?.nome || 'Consumidor')
+  const sacolaHtml = escapeHtml(sacola)
+  const totalSacolasHtml = escapeHtml(totalSacolas)
 
   const enderecoHtml =
     isDelivery(pedido) && pedido.enderecoEntrega
-      ? `<div class="address">${pedido.enderecoEntrega.rua}, ${pedido.enderecoEntrega.numero}</div>
-         <div class="address-sub">${pedido.enderecoEntrega.bairro}${pedido.enderecoEntrega.cidade ? ` — ${pedido.enderecoEntrega.cidade}` : ''}</div>`
+      ? `<div class="address">${escapeHtml(pedido.enderecoEntrega.rua)}, ${escapeHtml(pedido.enderecoEntrega.numero)}</div>
+         <div class="address-sub">${escapeHtml(pedido.enderecoEntrega.bairro)}${pedido.enderecoEntrega.cidade ? ` — ${escapeHtml(pedido.enderecoEntrega.cidade)}` : ''}</div>`
       : `<div class="address">★ RETIRADA NO BALCÃO ★</div>`
 
   return `<!DOCTYPE html>
@@ -723,13 +756,13 @@ export const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaur
   </style>
 </head>
 <body>
-  <div class="restaurant">${nomeRestaurante}</div>
+  <div class="restaurant">${restauranteNomeHtml}</div>
   <div class="divider"></div>
-  <div class="order-num">#${orderNum}</div>
-  <div class="bag-tag">SACOLA ${sacola} DE ${totalSacolas}</div>
+  <div class="order-num">#${orderNumHtml}</div>
+  <div class="bag-tag">SACOLA ${sacolaHtml} DE ${totalSacolasHtml}</div>
   <div class="divider"></div>
   <div class="label">Cliente</div>
-  <div class="client">${clienteNome}</div>
+  <div class="client">${clienteNomeHtml}</div>
   ${enderecoHtml}
   <div class="footer">NexFood • NEX07</div>
 </body>
@@ -762,6 +795,8 @@ export default function OrderManager() {
   const [showSlugModal, setShowSlugModal] = useState(false)
   const [printFailure, setPrintFailure] = useState(null)
   const [printStatuses, setPrintStatuses] = useState(readPrintStatuses)
+  const [printingOrderIds, setPrintingOrderIds] = useState(() => new Set())
+  const printingOrderIdsRef = useRef(new Set())
   const [boxDeliveryFailure, setBoxDeliveryFailure] = useState(null)
   const [motoboyAvailability, setMotoboyAvailability] = useState({
     checked: false,
@@ -814,6 +849,14 @@ export default function OrderManager() {
       return { ...prev, [orderId]: next }
     })
   }, [])
+
+  const getVisiblePrintStatus = useCallback(
+    (orderId) =>
+      printingOrderIds.has(orderId)
+        ? { ...(printStatuses[orderId] || {}), status: 'printing' }
+        : printStatuses[orderId],
+    [printStatuses, printingOrderIds]
+  )
 
   // ── Box Delivery: lido do storage uma vez (sem volatile deps) ─────────────
   const boxDeliveryAtivo = useMemo(() => {
@@ -1056,63 +1099,87 @@ useEffect(() => {
   // ── Impressão: restaurantConfig passado como parâmetro (sem getItem extra) ─
   const handlePrint = useCallback(
     async (pedido, { automatic = false } = {}) => {
-      const html = renderPedidoToHTML(pedido, restaurantConfig, {
-        fonteTamanho: settingsRef.current.fonteTamanho,
-        negritar: settingsRef.current.negritar,
-      })
+      const orderId = pedido?._id
+      if (!orderId || printingOrderIdsRef.current.has(orderId)) return false
 
-      if (electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica) {
-        const printed = await printWithFeedback(html)
-        if (printed) {
-          updatePrintStatus(pedido._id, (current) => {
-            const count = Number(current.count || 0) + 1
-            return {
-              status: count > 1 ? 'reprinted' : (automatic ? 'printed_auto' : 'printed_manual'),
-              count,
-              lastPrintedAt: Date.now(),
+      printingOrderIdsRef.current.add(orderId)
+      setPrintingOrderIds((current) => new Set(current).add(orderId))
+
+      const usesElectronPrinter =
+        electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica
+
+      // No Electron, permite pintar o feedback antes de chamar o spooler.
+      // No navegador, window.open precisa continuar ligado diretamente ao clique.
+      if (usesElectronPrinter) {
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+
+      try {
+        const html = renderPedidoToHTML(pedido, restaurantConfig, {
+          fonteTamanho: settingsRef.current.fonteTamanho,
+          negritar: settingsRef.current.negritar,
+        })
+
+        if (usesElectronPrinter) {
+          const printed = await printWithFeedback(html)
+          if (printed) {
+            updatePrintStatus(orderId, (current) => {
+              const count = Number(current.count || 0) + 1
+              return {
+                status: count > 1 ? 'reprinted' : (automatic ? 'printed_auto' : 'printed_manual'),
+                count,
+                lastPrintedAt: Date.now(),
+                printerName: settingsRef.current.impressoraAutomatica,
+                error: null,
+              }
+            })
+          } else {
+            updatePrintStatus(orderId, {
+              status: 'failed',
+              lastAttemptAt: Date.now(),
               printerName: settingsRef.current.impressoraAutomatica,
-              error: null,
-            }
-          })
-        } else {
-          updatePrintStatus(pedido._id, {
+              error: 'Falha ao enviar para a impressora.',
+            })
+          }
+          return printed
+        }
+
+        const w = window.open('', '_blank', 'width=380,height=700')
+        if (!w) {
+          updatePrintStatus(orderId, {
             status: 'failed',
             lastAttemptAt: Date.now(),
-            printerName: settingsRef.current.impressoraAutomatica,
-            error: 'Falha ao enviar para a impressora.',
+            error: 'Pop-up de impressão bloqueado.',
           })
+          alert('Pop-up bloqueado! Permita pop-ups para este site.')
+          return false
         }
-        return printed
-      }
-
-      const w = window.open('', '_blank', 'width=380,height=700')
-      if (!w) {
-        updatePrintStatus(pedido._id, {
-          status: 'failed',
-          lastAttemptAt: Date.now(),
-          error: 'Pop-up de impressão bloqueado.',
+        w.document.open()
+        w.document.write(html)
+        w.document.close()
+        w.onload = () => {
+          setTimeout(() => { w.focus(); w.print(); w.onafterprint = () => w.close() }, 200)
+        }
+        setTimeout(() => { if (!w.closed) { w.focus(); w.print() } }, 1500)
+        updatePrintStatus(orderId, (current) => {
+          const count = Number(current.count || 0) + 1
+          return {
+            status: count > 1 ? 'reprinted' : 'printed_manual',
+            count,
+            lastPrintedAt: Date.now(),
+            printerName: 'Impressão do sistema',
+            error: null,
+          }
         })
-        alert('Pop-up bloqueado! Permita pop-ups para este site.')
-        return false
+        return true
+      } finally {
+        printingOrderIdsRef.current.delete(orderId)
+        setPrintingOrderIds((current) => {
+          const next = new Set(current)
+          next.delete(orderId)
+          return next
+        })
       }
-      w.document.open()
-      w.document.write(html)
-      w.document.close()
-      w.onload = () => {
-        setTimeout(() => { w.focus(); w.print(); w.onafterprint = () => w.close() }, 200)
-      }
-      setTimeout(() => { if (!w.closed) { w.focus(); w.print() } }, 1500)
-      updatePrintStatus(pedido._id, (current) => {
-        const count = Number(current.count || 0) + 1
-        return {
-          status: count > 1 ? 'reprinted' : 'printed_manual',
-          count,
-          lastPrintedAt: Date.now(),
-          printerName: 'Impressão do sistema',
-          error: null,
-        }
-      })
-      return true
     },
     [restaurantConfig, printWithFeedback, updatePrintStatus]
   )
@@ -2136,7 +2203,7 @@ const handlePrintBagLabels = useCallback(
                       onClick={() => setSelectedOrder(p)}
                       onAdvance={() => advanceStatus(p)}
                       onPrint={() => handlePrint(p)}
-                      printStatus={printStatuses[p._id]}
+                      printStatus={getVisiblePrintStatus(p._id)}
                       color="purple"
                       isLoading={loadingOrderId === p._id}
                       searchQuery={searchQuery}
@@ -2163,7 +2230,7 @@ const handlePrintBagLabels = useCallback(
                     onClick={() => setSelectedOrder(p)}
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
-                    printStatus={printStatuses[p._id]}
+                    printStatus={getVisiblePrintStatus(p._id)}
                     color="orange"
                     isLoading={loadingOrderId === p._id}
                     searchQuery={searchQuery}
@@ -2191,7 +2258,7 @@ const handlePrintBagLabels = useCallback(
                     onClick={() => setSelectedOrder(p)}
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
-                    printStatus={printStatuses[p._id]}
+                    printStatus={getVisiblePrintStatus(p._id)}
                     color="blue"
                     isLoading={loadingOrderId === p._id}
                     searchQuery={searchQuery}
@@ -2223,7 +2290,7 @@ const handlePrintBagLabels = useCallback(
                     pedido={p}
                     onClick={() => setSelectedOrder(p)}
                     onPrint={() => handlePrint(p)}
-                    printStatus={printStatuses[p._id]}
+                    printStatus={getVisiblePrintStatus(p._id)}
                     isDone
                     color="emerald"
                     searchQuery={searchQuery}
@@ -2484,11 +2551,17 @@ const handlePrintBagLabels = useCallback(
 
                   <button
                     onClick={() => handlePrint(PEDIDO_TESTE_IMPRESSAO)}
+                    disabled={printingOrderIds.has(PEDIDO_TESTE_IMPRESSAO._id)}
                     type="button"
-                    className="w-full py-2.5 rounded-lg border border-dashed border-gray-300 text-sm text-gray-500 hover:text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all font-medium flex items-center justify-center gap-2"
+                    className="w-full py-2.5 rounded-lg border border-dashed border-gray-300 text-sm text-gray-500 hover:text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all font-medium flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-60"
                   >
-                    <i className="fas fa-print text-gray-400" aria-hidden="true"></i>
-                    Imprimir cupom de teste
+                    <i
+                      className={`fas ${printingOrderIds.has(PEDIDO_TESTE_IMPRESSAO._id) ? 'fa-spinner fa-spin' : 'fa-print'} text-gray-400`}
+                      aria-hidden="true"
+                    ></i>
+                    {printingOrderIds.has(PEDIDO_TESTE_IMPRESSAO._id)
+                      ? 'Imprimindo...'
+                      : 'Imprimir cupom de teste'}
                   </button>
                   <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
                     <div>
@@ -2773,7 +2846,7 @@ const handlePrintBagLabels = useCallback(
             pedido={selectedOrder}
             onClose={() => setSelectedOrder(null)}
             onPrint={(pedidoAtual) => handlePrint(pedidoAtual || selectedOrder)}
-            printStatus={printStatuses[selectedOrder._id]}
+            printStatus={getVisiblePrintStatus(selectedOrder._id)}
             onAdvance={advanceStatus}
             onPrintBagLabels={(pedido) => setBagLabelTarget(pedido)}
             showBagLabels={settings.usarEtiquetasSacola}
@@ -3465,16 +3538,40 @@ function OrderCard({
               e.stopPropagation()
               onPrint()
             }}
+            disabled={printStatus?.status === 'printing'}
             className={`rounded p-1.5 text-sm transition-colors focus:outline-none focus:ring-2 ${
-              printStatus?.status === 'failed'
+              printStatus?.status === 'printing'
+                ? 'cursor-wait bg-violet-100 text-violet-700'
+                : printStatus?.status === 'failed'
                 ? 'bg-red-100 text-red-700 hover:bg-red-200 focus:ring-red-400/40'
                 : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:ring-gray-400/40'
             }`}
-            title={printStatus?.status === 'failed' ? 'Tentar imprimir novamente' : 'Imprimir cupom'}
-            aria-label={printStatus?.status === 'failed' ? 'Tentar imprimir o pedido novamente' : 'Imprimir cupom do pedido'}
+            title={
+              printStatus?.status === 'printing'
+                ? 'Imprimindo pedido'
+                : printStatus?.status === 'failed'
+                ? 'Tentar imprimir novamente'
+                : 'Imprimir cupom'
+            }
+            aria-label={
+              printStatus?.status === 'printing'
+                ? 'Imprimindo pedido'
+                : printStatus?.status === 'failed'
+                ? 'Tentar imprimir o pedido novamente'
+                : 'Imprimir cupom do pedido'
+            }
             type="button"
           >
-            <i className={`fas ${printStatus?.status === 'failed' ? 'fa-rotate' : 'fa-print'}`} aria-hidden="true"></i>
+            <i
+              className={`fas ${
+                printStatus?.status === 'printing'
+                  ? 'fa-spinner fa-spin'
+                  : printStatus?.status === 'failed'
+                  ? 'fa-rotate'
+                  : 'fa-print'
+              }`}
+              aria-hidden="true"
+            ></i>
           </button>
           <button
             onClick={(e) => {
@@ -3902,12 +3999,25 @@ function OrderModal({
               <div className="flex gap-2">
                 <button
                   onClick={() => onPrint(currentPedido)}
-                  disabled={isLoading}
-                  className="flex-1 rounded-xl border border-gray-300 bg-white py-3 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  disabled={isLoading || printStatus?.status === 'printing'}
+                  className="flex-1 rounded-xl border border-gray-300 bg-white py-3 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60"
                   type="button"
                 >
-                  <i className={`fas ${printStatus?.status === 'failed' ? 'fa-rotate' : 'fa-print'} mr-1.5`} aria-hidden="true"></i>
-                  {printStatus?.status === 'failed' ? 'Tentar' : 'Imprimir'}
+                  <i
+                    className={`fas ${
+                      printStatus?.status === 'printing'
+                        ? 'fa-spinner fa-spin'
+                        : printStatus?.status === 'failed'
+                        ? 'fa-rotate'
+                        : 'fa-print'
+                    } mr-1.5`}
+                    aria-hidden="true"
+                  ></i>
+                  {printStatus?.status === 'printing'
+                    ? 'Imprimindo...'
+                    : printStatus?.status === 'failed'
+                    ? 'Tentar'
+                    : 'Imprimir'}
                 </button>
                 {showBagLabels && (
                   <button
