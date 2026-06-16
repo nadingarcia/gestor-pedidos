@@ -1,176 +1,227 @@
-# 🍔 Gestor de Pedidos NexFood
+# Gestor de Pedidos NexFood
 
-Sistema profissional de gestão de pedidos para restaurantes com interface Kanban e funcionalidades desktop.
+Aplicativo desktop/web para operação de pedidos de restaurantes no ecossistema NexFood. A tela principal organiza os pedidos em Kanban, envia pedidos para a cozinha, imprime cupons térmicos, notifica o cliente pelo NexBot e ajuda a operação de entrega com motoboy próprio ou Box Delivery.
 
-## ✨ Funcionalidades
+## Funcionalidades
 
-### 📊 Dashboard Kanban
-- **4 Colunas de Status**: Novos Pedidos → Na Cozinha → Em Rota → Finalizados
-- **Atualização em Tempo Real**: Polling automático configurável (10-120s)
-- **Cards Interativos**: Visualização rápida dos pedidos com detalhes principais
-- **Modal de Detalhes**: Visualização completa do pedido ao clicar
+### Operação de Pedidos
 
-### ⚙️ Configurações Avançadas
-- **Impressora Automática**: Selecione a impressora para pedidos automáticos
-- **Notificações Push**: Alertas de novos pedidos no desktop
-- **Som de Notificação**: Aviso sonoro ao receber pedidos
-- **Iniciar com Windows**: Abertura automática ao ligar o PC
-- **Auto-Refresh**: Atualização automática configurável
-- **Modo Escuro**: Interface moderna e elegante
+- Kanban por status: `Recebido`, `Em preparação`, `Saiu para entrega` e `Entregue`.
+- Aceitação automática opcional de novos pedidos.
+- Atualização automática configurável.
+- Cards com cliente, tipo de pedido, pagamento, totais, desconto, entrega e alertas.
+- Modal completo do pedido com itens, adicionais, observações, endereço e histórico operacional.
+- Separação de pedidos Pix pendentes/recusados para evitar produção antes da confirmação.
+- Cache local dos pedidos do dia para reduzir tela vazia e apoiar leitura durante instabilidade.
+- Indicadores de operação: pedidos atrasados, Pix recusado, NexBot offline, Box Delivery, motoboys e modo cache.
 
-### 🖨️ Sistema de Impressão
-- Impressão direta de pedidos
-- Suporte para impressoras térmicas
-- Configuração de impressora padrão
+### Impressão
 
-### 🔔 Notificações
-- Notificações nativas do sistema operacional
-- Alertas visuais e sonoros
-- Compatível com Windows, Mac e Linux
+- Impressão direta via Electron em impressoras instaladas no computador.
+- Cupom térmico em 72 mm com dados do restaurante, cliente, itens, totais, pagamento e desconto.
+- Seleção de impressora padrão.
+- Impressão automática ao aceitar pedido, quando configurada.
+- Reimpressão manual pelo card.
+- Cupom de teste.
+- Ajuste de fonte e opção de negrito para compatibilidade com impressoras térmicas.
+- Etiquetas de sacola com quantidade configurável por pedido.
 
-## 🚀 Instalação
+### Cozinha
 
-### Pré-requisitos
-- Node.js 18+ instalado
-- npm ou yarn
+- Display de cozinha em janela separada.
+- Envio automático dos pedidos `Em preparação` para a tela da cozinha.
+- Agrupamento por tipo de preparo.
+- Modo "somente cozinha" para ocultar informações comerciais.
+- Marcação local de itens prontos.
+- Janela em tela cheia ao abrir pelo Electron.
 
-### Passos
+### Entrega
 
-1. **Clone o repositório**
+- Agrupamento de pedidos próximos por distância, raio, janela de tempo e capacidade da bag.
+- Painéis flutuantes para clusters de rota.
+- Avanço de pedidos agrupados.
+- Link de rota no Google Maps pelo modal.
+- Integração com Box Delivery para chamar/cancelar entrega quando habilitada no restaurante.
+- Integração com app de entregador NexFood para consultar motoboys disponíveis e atribuir entrega.
+
+### NexBot e Notificações
+
+- Indicador de status do NexBot/WhatsApp.
+- Notificação ao cliente quando o pedido muda de status.
+- Notificações nativas do sistema operacional para novos pedidos.
+- Som de notificação com preload.
+- Clique na notificação foca a janela principal.
+
+### Desktop
+
+- Aplicativo Electron para Windows, macOS e Linux.
+- Instância única: abrir outra instância foca a janela já aberta.
+- Auto-launch opcional ao iniciar o sistema.
+- Auto-update via GitHub Releases/electron-updater.
+- Bloqueio de suspensão de tela durante a operação.
+- Aceleração de hardware desativada para evitar falhas de GPU no Linux.
+
+## Rotas
+
+- `/login`: autenticação do restaurante.
+- `/pedidos`: painel principal protegido por token.
+- `/kitchen`: display da cozinha.
+
+## Pré-requisitos
+
+- Node.js 24 recomendado.
+- npm.
+- Conta/restaurante válido no painel NexFood.
+- Para impressão desktop: executar pelo Electron e ter a impressora instalada no sistema operacional.
+
+## Instalação
+
 ```bash
-git clone https://github.com/seu-usuario/nexfood-gestor.git
-cd nexfood-gestor
-```
-
-2. **Instale as dependências**
-```bash
+git clone https://github.com/nadingarcia/gestor-pedidos.git
+cd gestor-pedidos
 npm install
 ```
 
-3. **Configure o Font Awesome**
+## Desenvolvimento
 
-O Font Awesome já está incluído no projeto via CDN no `index.html`.
-
-4. **Execute em modo desenvolvimento**
 ```bash
-# Apenas web
+# Web/Vite
 npm run dev
 
-# Com Electron (desktop)
-npm run electron:dev
-```
+# Electron + Vite
+npm run electrondev
 
-5. **Build para produção**
-```bash
+# Lint
+npm run lint
+
 # Build web
 npm run build
 
-# Build Electron (Windows)
+# Preview do build web
+npm run preview
+```
+
+## Build Desktop
+
+```bash
+# Build Electron para a plataforma atual
+npm run electron:build
+
+# Windows
 npm run electron:build:win
 
-# Build Electron (Mac)
+# macOS
 npm run electron:build:mac
 
-# Build Electron (Linux)
+# Linux
 npm run electron:build:linux
 ```
 
-## 📁 Estrutura do Projeto
+Os artefatos são gerados em `release/`.
 
+## Release por Tag
+
+O workflow `.github/workflows/release.yml` roda em `windows-latest` quando uma tag `v*` é enviada. Ele instala dependências com `npm ci`, executa `npm run build` e publica com `electron-builder --win --publish always`.
+
+Exemplo de release:
+
+```bash
+npm version patch --no-git-tag-version
+
+git add package.json package-lock.json
+git commit -m "chore: bump version"
+
+git tag -a v1.0.27 -m "v1.0.27"
+git push origin main
+git push origin v1.0.27
 ```
-nexfood-gestor/
+
+## Estrutura
+
+```text
+gestor-pedidos/
 ├── electron/
-│   └── main.cjs              # Processo principal do Electron
+│   ├── main.js          # Processo principal do Electron
+│   └── preload.cjs      # Bridge segura para IPC
+├── public/
+│   ├── logo.png
+│   └── icon-192.png
 ├── src/
 │   ├── components/
-│   │   └── OrderManager.jsx  # Componente principal
+│   │   ├── ClusterFloatingCard.jsx
+│   │   ├── PedidoTeste.js
+│   │   └── ProtectedRoute.jsx
+│   ├── hooks/
+│   │   ├── useNexBotStatus.jsx
+│   │   └── useOrderClustering.jsx
+│   ├── pages/
+│   │   ├── KitchenDisplay.jsx
+│   │   ├── Login.jsx
+│   │   └── OrderManager.jsx
 │   ├── utils/
-│   │   └── electronBridge.js # Ponte para APIs do Electron
+│   │   ├── apiFetch.js
+│   │   ├── electronBridge.js
+│   │   ├── nexBotNotify.js
+│   │   └── orderType.js
 │   ├── App.jsx
 │   ├── main.jsx
 │   └── index.css
-├── public/
-│   └── logo.png
+├── .github/workflows/release.yml
 ├── package.json
+├── tailwind.config.js
 └── vite.config.js
 ```
 
-## 🎨 Tecnologias Utilizadas
+## Tecnologias
 
-- **React 18**: Framework frontend
-- **Vite**: Build tool e dev server
-- **Electron**: Desktop application framework
-- **Tailwind CSS**: Framework CSS utilitário
-- **Font Awesome**: Biblioteca de ícones
-- **React Router**: Roteamento SPA
-- **Auto-Launch**: Inicialização automática com sistema
+- React 18
+- React Router
+- Vite
+- Electron
+- electron-builder
+- electron-updater
+- Tailwind CSS
+- Font Awesome
+- Auto Launch
+- ESLint
 
-## 🔧 Configuração
+## API Utilizada
 
-### Variáveis de Ambiente
+Base atual: `https://painel.nexfood.app/api`.
 
-Crie um arquivo `.env` na raiz do projeto:
+- `POST /login`: autentica restaurante.
+- `POST /refresh-token`: renova token expirado.
+- `GET /pedidos/dia`: lista pedidos do dia.
+- `GET /pedidos/:id`: consulta pedido.
+- `PATCH /pedidos/:id/status`: atualiza status do pedido.
+- `POST /pedidos/:id/box-delivery`: chama Box Delivery.
+- `POST /pedidos/:id/box-delivery/cancel`: cancela chamada Box Delivery.
+- `GET /motoboy/fila?restauranteSlug=...`: lista motoboys disponíveis.
+- `POST /motoboy/atribuir-entrega`: atribui motoboy ao pedido.
+- `GET /bot/restaurant/status`: consulta status do NexBot.
+- `POST /bot/restaurant/order-status`: notifica cliente via WhatsApp/NexBot.
 
-```env
-VITE_API_URL=https://painel.nexfood.app/api
-```
+As chamadas autenticadas usam `Authorization: Bearer {token}` via `src/utils/apiFetch.js`.
 
-### Impressoras
+## Configurações Locais
 
-O sistema detecta automaticamente todas as impressoras instaladas no computador. Para configurar:
+As preferências operacionais são salvas no `localStorage`, incluindo:
 
-1. Abra o menu de configurações (ícone de engrenagem)
-2. Selecione a impressora desejada
-3. A configuração é salva automaticamente
+- impressora automática;
+- aceitação automática;
+- notificações e som;
+- tempo de atualização;
+- agrupamento por distância;
+- endereço do restaurante;
+- app de entregador;
+- estilo do cupom;
+- etiquetas de sacola.
 
-### Notificações
+O login pode salvar sessão em `localStorage` ou `sessionStorage`, conforme a opção "lembrar".
 
-Para habilitar notificações:
+## Observações
 
-1. Permita notificações quando solicitado pelo navegador/aplicativo
-2. Ative "Notificações Push" nas configurações
-3. Configure o som se desejar alertas sonoros
-
-### Iniciar com Windows
-
-1. Abra as configurações
-2. Ative "Iniciar com Windows"
-3. O aplicativo será aberto automaticamente ao ligar o PC
-
-## 📋 API Endpoints Utilizados
-
-- `GET /api/pedidos/dia` - Buscar pedidos do dia
-- Headers necessários: `Authorization: Bearer {token}`
-
-## 🎯 Roadmap
-
-- [ ] Integração com WhatsApp Business
-- [ ] Relatórios e estatísticas avançadas
-- [ ] Suporte multi-loja
-- [ ] Integração com iFood/Rappi
-- [ ] Chat interno para equipe
-- [ ] Modo offline com sincronização
-
-## 🐛 Problemas Conhecidos
-
-### Linux: Erro SIGSEGV/GPU
-**Solução**: Já incluída no código - `app.disableHardwareAcceleration()`
-
-### Notificações não aparecem
-**Solução**: Verifique as permissões do sistema operacional para notificações
-
-## 📄 Licença
-
-MIT License - veja o arquivo LICENSE para detalhes
-
-## 👥 Contribuindo
-
-Contribuições são bem-vindas! Por favor, abra uma issue primeiro para discutir mudanças maiores.
-
-## 📞 Suporte
-
-Para suporte, envie um email para suporte@nexfood.com ou abra uma issue no GitHub.
-
----
-
-Desenvolvido com ❤️ por NexFood Team
+- `VITE_API_URL` não é usado hoje no código; as URLs da API estão fixas em `https://painel.nexfood.app/api`.
+- O script correto para desenvolvimento desktop é `npm run electrondev`.
+- O Font Awesome está instalado como dependência do projeto.
+- O release automático depende de `GH_TOKEN` configurado nos secrets do repositório.
