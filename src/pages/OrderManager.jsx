@@ -222,9 +222,9 @@ const getPaymentInfo = (pedido) => {
   }
 }
 
-const getTimeElapsed = (dateStr) => {
+const getTimeElapsed = (dateStr, now = Date.now()) => {
   if (!dateStr) return { minutes: 0, isUrgent: false }
-  const minutes = Math.floor((Date.now() - new Date(dateStr)) / 60000)
+  const minutes = Math.floor((now - new Date(dateStr)) / 60000)
   return { minutes, isUrgent: minutes > 30 }
 }
 
@@ -717,7 +717,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
 // ETIQUETA DE SACOLA — cupom minimalista com número do pedido em destaque
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConfig = {}) => {
+const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConfig = {}) => {
   const { nome: nomeRestaurante = 'Restaurante' } = restaurantConfig
   const restauranteNomeHtml = escapeHtml(nomeRestaurante)
   const orderNumHtml = escapeHtml(getOrderNumber(pedido))
@@ -1430,8 +1430,8 @@ const handlePrintBagLabels = useCallback(
   }, [playNotificationSound, sendPushNotification, handlePrint, callBoxDelivery, addToast])
 
   useEffect(() => {
-  if (isOnline && wasOffline.current) fetchPedidos()
-}, [isOnline, fetchPedidos])
+    if (isOnline && wasOffline.current) fetchPedidos()
+  }, [isOnline, wasOffline, fetchPedidos])
 
   // ── Intervalo de refresh ──────────────────────────────────────────────────
   //
@@ -1792,12 +1792,18 @@ const handlePrintBagLabels = useCallback(
   }, [searchQuery, filters])
 
   const delayedOrders = useMemo(
-    () => pedidosComClusters.filter((p) => {
-      if (['Entregue', 'Cancelado'].includes(p.status)) return false
-      const estimatedMins = isDelivery(p) ? 40 : 15
-      return getTimeElapsed(p.createdAt).minutes > estimatedMins
-    }),
-    [pedidosComClusters, secondsSinceUpdate]
+    () => {
+      const elapsedAt = lastUpdated
+        ? lastUpdated + secondsSinceUpdate * 1000
+        : Date.now()
+
+      return pedidosComClusters.filter((p) => {
+        if (['Entregue', 'Cancelado'].includes(p.status)) return false
+        const estimatedMins = isDelivery(p) ? 40 : 15
+        return getTimeElapsed(p.createdAt, elapsedAt).minutes > estimatedMins
+      })
+    },
+    [pedidosComClusters, lastUpdated, secondsSinceUpdate]
   )
 
   const operationalAlerts = useMemo(() => {
@@ -3228,9 +3234,6 @@ function OrderCard({
   searchQuery,
   visibleClusters,
   toggleClusterPin,
-  columnWidth = 'normal',
-  restaurantAddress,
-  pedidos,
 }) {
   const colorThemes = {
     purple: 'border-l-4 border-l-[#7f22fe]',
@@ -4535,7 +4538,7 @@ function BagCountModal({ pedido, onConfirm, onClose }) {
   )
 }
 
-function MotoboySelectorModal({ pedido, nexBotStatus, onClose, onAtribuido, onSkip }) {
+function MotoboySelectorModal({ pedido, onClose, onAtribuido, onSkip }) {
   const [motoboys, setMotoboys]   = useState([])
   const [loading, setLoading]     = useState(true)
   const [atribuindo, setAtribuindo] = useState(null)
@@ -4552,7 +4555,7 @@ function MotoboySelectorModal({ pedido, nexBotStatus, onClose, onAtribuido, onSk
         setLoading(false)
       })
       .catch(() => { setErro('Erro ao buscar motoboys.'); setLoading(false) })
-  }, [])
+  }, [slug])
 
   const handleAtribuir = async (presenca) => {
   setAtribuindo(presenca.presencaId)

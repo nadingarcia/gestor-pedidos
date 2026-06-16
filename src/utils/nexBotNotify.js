@@ -6,7 +6,7 @@
 import { apiFetch } from '@utils/apiFetch'; // <-- Importando o apiFetch
 import { isDelivery } from '@utils/orderType'
 
-const BOT_URL = "https://lizanimiranda.com.br"
+const BOT_URL = "https://nexbot.nexfood.app"
 
 const STATUS_MAP = {
   'Em preparação':     'PREPARING',

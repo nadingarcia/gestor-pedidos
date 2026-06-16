@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react'
 import { apiFetch } from '@utils/apiFetch' // <-- Importe o seu novo apiFetch
 
-const BOT_URL      = "https://lizanimiranda.com.br"
+const BOT_URL      = "https://nexbot.nexfood.app"
 const POLL_INTERVAL = 30_000  // 30s — suficiente para feedback visual
 
 /**
