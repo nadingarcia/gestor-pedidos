@@ -41,6 +41,23 @@ export const electronAPI = {
   },
 
   sendNotification: (title, body) => safeInvoke(window.electronAPI.sendNotification, title, body),
+  onUpdateAvailable: (cb) => {
+    if (!isElectron()) return
+    window.electronAPI.onUpdateAvailable(cb)
+  },
+  onUpdateDownloadProgress: (cb) => {
+    if (!isElectron()) return
+    window.electronAPI.onUpdateDownloadProgress(cb)
+  },
+  onUpdateDownloaded: (cb) => {
+    if (!isElectron()) return
+    window.electronAPI.onUpdateDownloaded(cb)
+  },
+  offUpdaterEvents: () => {
+    if (!isElectron()) return
+    window.electronAPI.offUpdaterEvents()
+  },
+  installUpdate: () => safeInvoke(window.electronAPI.installUpdate),
   isElectron,
 };
 

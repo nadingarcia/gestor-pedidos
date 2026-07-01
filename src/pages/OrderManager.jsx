@@ -54,6 +54,7 @@ notificationAudio.preload = 'auto'
 const CACHE_KEY = 'nexfood_pedidos_cache'
 const CACHE_MAX_AGE_MS = 8 * 60 * 60 * 1000 // 8 horas
 const PRINT_STATUS_KEY = 'nexfood_order_print_status'
+const ORDER_REFRESH_SECONDS = 10
 
 const readPedidosCache = () => {
   try {
@@ -781,6 +782,8 @@ export default function OrderManager() {
   const [loading, setLoading] = useState(true)
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [showClearDataConfirm, setShowClearDataConfirm] = useState(false)
   const [printers, setPrinters] = useState([])
   const [loadingOrderId, setLoadingOrderId] = useState(null)
   const [isFullScreen, setIsFullScreen] = useState(false)
@@ -807,6 +810,10 @@ export default function OrderManager() {
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0)
+  const [updateState, setUpdateState] = useState({
+    status: 'idle',
+    progress: 0,
+  })
 
   // ── Busca e filtros ───────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
@@ -882,6 +889,30 @@ export default function OrderManager() {
   const nexBotStatus = useNexBotStatus()
   const restaurantConfig = useRestaurantConfig()
   const { isOnline, wasOffline } = useOnlineStatus()
+  const accountInfo = useMemo(() => {
+    let user = {}
+    try {
+      user = JSON.parse(
+        localStorage.getItem('nexfood_user') ||
+          sessionStorage.getItem('nexfood_user') ||
+          '{}'
+      )
+    } catch {
+      user = {}
+    }
+
+    const restaurante =
+      user.nomeRestaurante ||
+      user.restaurante?.nome ||
+      localStorage.getItem('nomeRestaurante') ||
+      'Restaurante'
+
+    return {
+      restaurante,
+      cnpj: restaurantConfig.cnpj,
+      slug: user.slug || localStorage.getItem('restauranteSlug') || '',
+    }
+  }, [restaurantConfig.cnpj])
 
   // ── Configurações — inicializadas do localStorage de forma síncrona ───────
   const [settings, setSettings] = useState({
@@ -889,10 +920,7 @@ export default function OrderManager() {
     aceitarAutomatico: localStorage.getItem('aceitarAutomatico') !== 'false',
     notificacoesPush: localStorage.getItem('notificacoesPush') === 'true',
     somNotificacao: localStorage.getItem('somNotificacao') !== 'false',
-    tempoRefresh: Math.max(
-      10,
-      Math.min(30, parseInt(localStorage.getItem('tempoRefresh')) || 10)
-    ),
+    tempoRefresh: ORDER_REFRESH_SECONDS,
     agruparPorDistancia:
       localStorage.getItem('agruparPorDistancia') === 'true',
     raioCluster: parseFloat(localStorage.getItem('raioCluster')) || 2,
@@ -928,7 +956,7 @@ useEffect(() => {
    *
    * Problema anterior: fetchPedidos dependia de [settings.aceitarAutomatico,
    * settings.impressoraAutomatica], forçando o useEffect a recriar o setInterval
-   * sempre que qualquer config mudava (incluindo tempoRefresh), causando
+   * sempre que qualquer config mudava, causando
    * um burst de requisições paralelas no momento da mudança.
    *
    * Solução: funções de callback leem settingsRef.current no momento da
@@ -1002,6 +1030,25 @@ useEffect(() => {
     if (!electronAPI.isElectron()) return
     electronAPI.setPowerBlocker(true)
     return () => { electronAPI.setPowerBlocker(false) }
+  }, [])
+
+  useEffect(() => {
+    if (!electronAPI.isElectron()) return
+
+    electronAPI.onUpdateAvailable(() => {
+      setUpdateState({ status: 'downloading', progress: 0 })
+    })
+    electronAPI.onUpdateDownloadProgress((progress) => {
+      setUpdateState({
+        status: 'downloading',
+        progress: Math.round(progress?.percent || 0),
+      })
+    })
+    electronAPI.onUpdateDownloaded(() => {
+      setUpdateState({ status: 'ready', progress: 100 })
+    })
+
+    return () => electronAPI.offUpdaterEvents()
   }, [])
 
   useEffect(() => {
@@ -1434,19 +1481,16 @@ const handlePrintBagLabels = useCallback(
   }, [isOnline, wasOffline, fetchPedidos])
 
   // ── Intervalo de refresh ──────────────────────────────────────────────────
-  //
-  // Reinicia APENAS quando tempoRefresh muda (ou fetchPedidos é recriado,
-  // o que não acontece mais com os volatile deps removidos).
-  // O cleanup aborta qualquer request em voo ao desmontar ou reiniciar.
-  // ──────────────────────────────────────────────────────────────────────────
+  // Pedidos precisam chegar rapido no caixa; mantemos 10s fixo para evitar
+  // configuracao operacional desnecessaria.
   useEffect(() => {
     fetchPedidos()
-    const interval = setInterval(fetchPedidos, settings.tempoRefresh * 1000)
+    const interval = setInterval(fetchPedidos, ORDER_REFRESH_SECONDS * 1000)
     return () => {
       clearInterval(interval)
       abortControllerRef.current?.abort()
     }
-  }, [fetchPedidos, settings.tempoRefresh])
+  }, [fetchPedidos])
 
   // ── advanceStatus com atualização otimista ────────────────────────────────
   //
@@ -1590,6 +1634,26 @@ const handlePrintBagLabels = useCallback(
       }
     }
   }, [saveSettings, sendPushNotification])
+
+  const handleConfirmLogout = useCallback(() => {
+    ['nexfood_token', 'nexfood_user', 'nexfood_refresh_token'].forEach((key) => localStorage.removeItem(key))
+    sessionStorage.removeItem('nexfood_token')
+    sessionStorage.removeItem('nexfood_refresh_token')
+    sessionStorage.removeItem('nexfood_user')
+    setShowLogoutConfirm(false)
+    navigate('/login')
+  }, [navigate])
+
+  const handleClearLocalData = useCallback(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    setShowClearDataConfirm(false)
+    navigate('/login')
+  }, [navigate])
+
+  const handleInstallUpdate = useCallback(() => {
+    electronAPI.installUpdate()
+  }, [])
 
   // ── Derivações memoizadas dos pedidos ─────────────────────────────────────
   const activeOrders = useMemo(
@@ -2483,8 +2547,43 @@ const handlePrintBagLabels = useCallback(
           >
             <div className="p-4 space-y-3">
 
+            {/* ── Operação ──────────────────────────────────────────────── */}
+            <AccordionSection id="acc-operacao" icon="store" title="Operação" defaultOpen={true}>
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <div>
+                  <p className="text-sm text-gray-900 font-medium">Aceitar pedidos automaticamente</p>
+                  <p className="text-xs text-gray-500">Novos pedidos entram direto em preparação</p>
+                </div>
+                <Switch
+                  checked={settings.aceitarAutomatico}
+                  onChange={() => saveSettings({ ...settings, aceitarAutomatico: !settings.aceitarAutomatico })}
+                  ariaLabel="Ativar aceitação automática de pedidos"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <div>
+                  <p className="text-sm text-gray-900 font-medium">Aviso do sistema</p>
+                  <p className="text-xs text-gray-500">Mostra notificação quando chegar pedido</p>
+                </div>
+                <Switch checked={settings.notificacoesPush} onChange={handleToggleNotification} ariaLabel="Ativar notificações push" />
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <div>
+                  <p className="text-sm text-gray-900 font-medium">Som ao receber pedido</p>
+                  <p className="text-xs text-gray-500">Toca alerta sonoro para novos pedidos</p>
+                </div>
+                <Switch
+                  checked={settings.somNotificacao}
+                  onChange={() => saveSettings({ ...settings, somNotificacao: !settings.somNotificacao })}
+                  ariaLabel="Ativar som ao receber pedido"
+                />
+              </div>
+            </AccordionSection>
+
             {/* ── Impressão ─────────────────────────────────────────────── */}
-            <AccordionSection id="acc-impressao" icon="print" title="Impressão" defaultOpen={true}>
+            <AccordionSection id="acc-impressao" icon="print" title="Impressão">
 
               <label htmlFor="select-impressora" className="sr-only">Impressora automática</label>
               <select
@@ -2498,15 +2597,6 @@ const handlePrintBagLabels = useCallback(
                   <option key={p.name} value={p.name}>{p.name}</option>
                 ))}
               </select>
-
-              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
-                <span className="text-sm text-gray-900 font-medium">Aceitar Automaticamente</span>
-                <Switch
-                  checked={settings.aceitarAutomatico}
-                  onChange={() => saveSettings({ ...settings, aceitarAutomatico: !settings.aceitarAutomatico })}
-                  ariaLabel="Ativar aceitação automática de pedidos"
-                />
-              </div>
 
               {/* Estilo do cupom */}
               <div className="rounded-lg border border-gray-200 overflow-hidden">
@@ -2590,42 +2680,48 @@ const handlePrintBagLabels = useCallback(
 
             {/* ── Sistema ───────────────────────────────────────────────── */}
             <AccordionSection id="acc-sistema" icon="sliders-h" title="Sistema">
-
-              <div className="p-5 rounded-lg bg-gray-50 border border-gray-200">
-                <div className="flex justify-between mb-3">
-                  <span className="text-sm font-semibold text-gray-900">Atualização Automática</span>
+              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">Sincronização de pedidos</p>
+                    <p className="text-xs text-gray-500 mt-1">Pedidos atualizados automaticamente a cada 10 segundos</p>
+                  </div>
                   <span className="text-sm font-bold text-[#7f22fe] bg-purple-50 px-3 py-1 rounded-full border border-purple-200">
-                    {settings.tempoRefresh}s
+                    {ORDER_REFRESH_SECONDS}s
                   </span>
                 </div>
-                <input
-                  type="range" min="10" max="30" step="10"
-                  value={settings.tempoRefresh}
-                  onChange={(e) => saveSettings({ ...settings, tempoRefresh: parseInt(e.target.value) })}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider-purple"
-                  aria-label={`Tempo de atualização automática: ${settings.tempoRefresh} segundos`}
-                />
-                <div className="flex justify-between text-xs text-gray-500 mt-2 font-medium">
-                  <span>10s Rápido</span>
-                  <span>30s Lento</span>
-                </div>
               </div>
 
-              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
-                <div>
-                  <span className="text-sm text-gray-900 font-medium">Notificações Push</span>
-                  <span className="text-xs text-gray-500 block">Teste ao ativar</span>
+              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">Atualização do gestor</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {updateState.status === 'ready'
+                        ? 'Nova versão baixada e pronta para instalar'
+                        : updateState.status === 'downloading'
+                        ? `Baixando atualização (${updateState.progress}%)`
+                        : `Versão atual v${packageInfo.version}`}
+                    </p>
+                  </div>
+                  {updateState.status === 'ready' ? (
+                    <button
+                      type="button"
+                      onClick={handleInstallUpdate}
+                      className="shrink-0 rounded-lg bg-[#7f22fe] px-3 py-2 text-xs font-bold text-white hover:bg-[#6b1de0]"
+                    >
+                      Atualizar
+                    </button>
+                  ) : (
+                    <span className={`shrink-0 text-xs font-bold px-3 py-1 rounded-full border ${
+                      updateState.status === 'downloading'
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    }`}>
+                      {updateState.status === 'downloading' ? 'Baixando' : 'Em dia'}
+                    </span>
+                  )}
                 </div>
-                <Switch checked={settings.notificacoesPush} onChange={handleToggleNotification} ariaLabel="Ativar notificações push" />
-              </div>
-
-              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
-                <span className="text-sm text-gray-900 font-medium">Efeito Sonoro</span>
-                <Switch
-                  checked={settings.somNotificacao}
-                  onChange={() => saveSettings({ ...settings, somNotificacao: !settings.somNotificacao })}
-                  ariaLabel="Ativar efeito sonoro"
-                />
               </div>
             </AccordionSection>
 
@@ -2799,8 +2895,8 @@ const handlePrintBagLabels = useCallback(
               )}
             </AccordionSection>
 
-            {/* ── Sobre + Logout ────────────────────────────────────────── */}
-            <AccordionSection id="acc-sobre" icon="info-circle" title="Sobre" defaultOpen={true}>
+            {/* ── Sobre ─────────────────────────────────────────────────── */}
+            <AccordionSection id="acc-sobre" icon="info-circle" title="Sobre">
               <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
                 <div className="text-center mb-4">
                   <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-md">
@@ -2821,7 +2917,7 @@ const handlePrintBagLabels = useCallback(
                     <span className="text-gray-900 font-bold">v{packageInfo.version}</span>
                   </div>
                   <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
-                    <span className="text-gray-600">CNPJ:</span>
+                    <span className="text-gray-600">CNPJ NexFood:</span>
                     <span className="text-gray-900 font-medium">63.805.056/0001-33</span>
                   </div>
                   <div className="flex justify-between p-2 rounded bg-white border border-gray-100">
@@ -2830,19 +2926,56 @@ const handlePrintBagLabels = useCallback(
                   </div>
                 </div>
               </div>
+            </AccordionSection>
+
+            {/* ── Conta ─────────────────────────────────────────────────── */}
+            <AccordionSection id="acc-conta" icon="user-circle" title="Conta">
+              <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="w-11 h-11 rounded-lg bg-[#7f22fe]/10 text-[#7f22fe] flex items-center justify-center shrink-0">
+                    <i className="fas fa-store" aria-hidden="true"></i>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                      Restaurante logado
+                    </p>
+                    <p className="font-bold text-gray-900 truncate">
+                      {accountInfo.restaurante}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  {accountInfo.cnpj && (
+                    <div className="flex justify-between gap-3 p-2 rounded bg-white border border-gray-100">
+                      <span className="text-gray-600">CNPJ:</span>
+                      <span className="text-gray-900 font-medium">{accountInfo.cnpj}</span>
+                    </div>
+                  )}
+                  {accountInfo.slug && (
+                    <div className="flex justify-between gap-3 p-2 rounded bg-white border border-gray-100">
+                      <span className="text-gray-600">Slug:</span>
+                      <span className="text-gray-900 font-medium truncate">{accountInfo.slug}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
               <button
-                onClick={() => {
-                  ['nexfood_token', 'nexfood_user', 'nexfood_refresh_token'].forEach((k) => localStorage.removeItem(k))
-                  sessionStorage.removeItem('nexfood_token')
-                  sessionStorage.removeItem('nexfood_refresh_token')
-                  sessionStorage.removeItem('nexfood_user')
-                  navigate('/login')
-                }}
+                onClick={() => setShowLogoutConfirm(true)}
                 className="w-full py-3 rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 font-bold transition-all uppercase tracking-wider text-sm"
+                type="button"
               >
                 <i className="fas fa-sign-out-alt mr-2" aria-hidden="true"></i>
                 Encerrar Sessão
+              </button>
+              <button
+                onClick={() => setShowClearDataConfirm(true)}
+                className="w-full py-3 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 hover:text-gray-800 font-bold transition-all uppercase tracking-wider text-sm"
+                type="button"
+              >
+                <i className="fas fa-broom mr-2" aria-hidden="true"></i>
+                Limpar Cache e Dados Locais
               </button>
             </AccordionSection>
 
@@ -2903,6 +3036,20 @@ const handlePrintBagLabels = useCallback(
               addToast('✅ Slug salvo! App do Entregador ativado.', 'success')
             }}
             onClose={() => setShowSlugModal(false)}
+          />
+        )}
+
+        {showLogoutConfirm && (
+          <LogoutConfirmModal
+            onConfirm={handleConfirmLogout}
+            onClose={() => setShowLogoutConfirm(false)}
+          />
+        )}
+
+        {showClearDataConfirm && (
+          <ClearLocalDataModal
+            onConfirm={handleClearLocalData}
+            onClose={() => setShowClearDataConfirm(false)}
           />
         )}
 
@@ -4402,6 +4549,148 @@ function AccordionSection({ id, icon, title, defaultOpen = false, children }) {
           {children}
         </div>
       )}
+    </div>
+  )
+}
+
+function LogoutConfirmModal({ onConfirm, onClose }) {
+  const trapRef = useFocusTrap(true, onClose)
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+
+      <div
+        ref={trapRef}
+        className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logout-modal-title"
+      >
+        <div className="border-b border-gray-200 px-5 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                <i className="fas fa-right-from-bracket" aria-hidden="true"></i>
+              </div>
+              <div>
+                <h3 id="logout-modal-title" className="text-base font-bold text-gray-900">
+                  Encerrar sessão?
+                </h3>
+                <p className="text-xs font-medium text-gray-500">
+                  Você precisará fazer login novamente para voltar ao gestor.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+              aria-label="Cancelar encerramento de sessão"
+              type="button"
+            >
+              <i className="fas fa-times" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <p className="text-sm leading-relaxed text-gray-600">
+            Os pedidos deixam de sincronizar nesta tela assim que a sessão for encerrada.
+          </p>
+
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700">
+            Confirme apenas se realmente deseja sair da conta atual.
+          </div>
+        </div>
+
+        <div className="flex gap-3 border-t border-gray-200 px-5 py-4">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-xl border border-gray-300 bg-white py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+            type="button"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-[1.4] rounded-xl bg-red-600 py-3 text-sm font-black text-white transition-colors hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40"
+            type="button"
+          >
+            Encerrar sessão
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ClearLocalDataModal({ onConfirm, onClose }) {
+  const trapRef = useFocusTrap(true, onClose)
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+
+      <div
+        ref={trapRef}
+        className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="clear-data-modal-title"
+      >
+        <div className="border-b border-gray-200 px-5 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                <i className="fas fa-broom" aria-hidden="true"></i>
+              </div>
+              <div>
+                <h3 id="clear-data-modal-title" className="text-base font-bold text-gray-900">
+                  Limpar cache e dados locais?
+                </h3>
+                <p className="text-xs font-medium text-gray-500">
+                  Esta ação limpa as preferências salvas neste computador.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+              aria-label="Cancelar limpeza de dados locais"
+              type="button"
+            >
+              <i className="fas fa-times" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <p className="text-sm leading-relaxed text-gray-600">
+            Isso apaga sessão, cache de pedidos, impressora escolhida, filtros e outras configurações locais. Depois será necessário fazer login novamente.
+          </p>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">
+            Use quando o gestor estiver com dados antigos, configuração travada ou comportamento estranho.
+          </div>
+        </div>
+
+        <div className="flex gap-3 border-t border-gray-200 px-5 py-4">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-xl border border-gray-300 bg-white py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+            type="button"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-[1.4] rounded-xl bg-amber-600 py-3 text-sm font-black text-white transition-colors hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+            type="button"
+          >
+            Limpar dados
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

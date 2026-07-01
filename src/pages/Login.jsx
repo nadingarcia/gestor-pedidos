@@ -74,6 +74,16 @@ export default function Login() {
     setRemember(prev => !prev)
   }, [])
 
+  const handleForgotPassword = useCallback(() => {
+    const telefoneDigitado = telefone.replace(/\D/g, '')
+    const mensagem = telefoneDigitado
+      ? `Olá! Esqueci minha senha. Meu telefone cadastrado é ${telefoneDigitado}. Pode me enviar o link de redefinição?`
+      : 'Olá! Esqueci minha senha no NEXFOOD. Pode me enviar o link de redefinição?'
+
+    const whatsappUrl = `https://wa.me/5511968337522?text=${encodeURIComponent(mensagem)}`
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer')
+  }, [telefone])
+
   // ============================================================================
   // SUBMIT
   // ============================================================================
@@ -383,12 +393,13 @@ export default function Login() {
                     >
                       Senha
                     </label>
-                    <a 
-                      href="#recuperar" 
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
                       className="text-[#7f22fe] hover:text-[#6b1de0] text-xs font-medium hover:underline transition"
                     >
                       Esqueceu?
-                    </a>
+                    </button>
                   </div>
                   
                   <div className="relative">

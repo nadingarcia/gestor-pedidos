@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, powerSaveBlocker, shell } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import AutoLaunch from 'auto-launch'
@@ -56,6 +56,23 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    }
+
+    return { action: 'allow' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const currentUrl = mainWindow.webContents.getURL()
+    if (url !== currentUrl && (url.startsWith('http://') || url.startsWith('https://'))) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
 
  mainWindow.once('ready-to-show', () => {
   mainWindow.show()
@@ -117,10 +134,16 @@ autoUpdater.on('download-progress', (progressObj) => {
   let log_message = "Velocidade de download: " + progressObj.bytesPerSecond
   log_message = log_message + ' - Baixado ' + progressObj.percent + '%'
   log.info(log_message)
+  if (mainWindow) mainWindow.webContents.send('update_download_progress', {
+    percent: progressObj.percent,
+    transferred: progressObj.transferred,
+    total: progressObj.total,
+  })
 })
 
 autoUpdater.on('update-downloaded', () => {
   log.info('Atualização baixada.')
+  if (mainWindow) mainWindow.webContents.send('update_downloaded')
   
   dialog.showMessageBox(mainWindow, {
     type: 'info',
@@ -134,6 +157,10 @@ autoUpdater.on('update-downloaded', () => {
   })
 })
 
+ipcMain.handle('install-update', () => {
+  autoUpdater.quitAndInstall(false, true)
+  return { success: true }
+})
 
 // 🔹 Auto launch
 ipcMain.handle('set-auto-launch', async (event, enable) => {
