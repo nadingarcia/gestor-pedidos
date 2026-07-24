@@ -3532,7 +3532,7 @@ function OrderCard({
 
         {!isDone && (
           <span
-            className={`text-[9px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 cursor-help ${
+            className={`text-[10px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 cursor-help ${
               countdown.isLate
                 ? 'bg-red-100 text-red-600'
                 : countdown.isWarning
@@ -3548,7 +3548,7 @@ function OrderCard({
 
         {isUrgent && !isDone && (
           <span
-            className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-500 text-white shrink-0"
+            className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500 text-white shrink-0"
             aria-label={`Pedido aguarda há ${minutes} minutos`}
             title={`Pedido aguarda há ${minutes} minutos`}
           >
@@ -3563,7 +3563,7 @@ function OrderCard({
 
       {/* Linha 2: Nome do cliente */}
       <div className="flex items-center gap-1.5">
-        <p className="text-xs font-bold text-gray-900 truncate flex-1">
+        <p className="text-sm font-bold text-gray-900 truncate flex-1">
           {highlightText(pedido.cliente?.nome || 'Consumidor')}
         </p>
         {pedido.cliente?.totalPedidos > 1 && (
@@ -3579,7 +3579,7 @@ function OrderCard({
       {/* Indicadores operacionais compactos */}
       <div className="flex items-center gap-1 flex-wrap">
         <span
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] font-bold shrink-0 ${
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold shrink-0 ${
             isDelivery(pedido)
               ? 'bg-blue-50 text-blue-700 border-blue-200'
               : 'bg-orange-50 text-orange-700 border-orange-200'
@@ -3588,40 +3588,40 @@ function OrderCard({
           <i
             className={`fas ${
               isDelivery(pedido) ? 'fa-motorcycle' : 'fa-store'
-            } text-[8px]`}
+            } text-[9px]`}
             aria-hidden="true"
           ></i>
           {getTipoPedidoLabel(pedido.tipo)}
         </span>
 
         <span
-          className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-black ${paymentInfo.className}`}
+          className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-black ${paymentInfo.className}`}
           title={paymentInfo.label}
         >
-          <i className={`fas ${paymentInfo.icon} text-[8px]`} aria-hidden="true"></i>
+          <i className={`fas ${paymentInfo.icon} text-[9px]`} aria-hidden="true"></i>
           <span className="truncate">{paymentInfo.shortLabel || paymentInfo.label}</span>
         </span>
 
         {hasObservation && (
           <span
-            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9px] font-black text-amber-900"
+            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900"
             title="Este pedido possui observação em um ou mais itens"
           >
-            <i className="fas fa-comment-dots text-[8px]" aria-hidden="true"></i>
+            <i className="fas fa-comment-dots text-[9px]" aria-hidden="true"></i>
             OBSERVAÇÃO
           </span>
         )}
 
         {discountInfo && (
           <span
-            className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] ${
+            className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
               discountInfo.isCampaign
                 ? 'bg-violet-50 border-violet-200 text-violet-700'
                 : 'bg-emerald-50 border-emerald-200 text-emerald-700'
             }`}
             title={discountInfo.label}
           >
-            <i className="fas fa-tag text-[8px]" aria-hidden="true"></i>
+            <i className="fas fa-tag text-[9px]" aria-hidden="true"></i>
             <span className="truncate font-bold">{discountInfo.shortLabel}</span>
             <span className="shrink-0 font-black">-{formatCurrency(pedido.desconto)}</span>
           </span>
@@ -3634,18 +3634,18 @@ function OrderCard({
               event.stopPropagation()
               onPrint()
             }}
-            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-black hover:brightness-95 ${printInfo.className}`}
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-black hover:brightness-95 ${printInfo.className}`}
             title={`${printStatus?.error || printInfo.label}. Clique para tentar novamente.`}
           >
-            <i className="fas fa-rotate text-[8px]" aria-hidden="true"></i>
+            <i className="fas fa-rotate text-[9px]" aria-hidden="true"></i>
             {printInfo.shortLabel}
           </button>
         ) : (
           <span
-            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-bold ${printInfo.className}`}
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold ${printInfo.className}`}
             title={printInfo.label}
           >
-            <i className={`fas ${printInfo.icon} text-[8px]`} aria-hidden="true"></i>
+            <i className={`fas ${printInfo.icon} text-[9px]`} aria-hidden="true"></i>
             {printInfo.shortLabel}
           </span>
         ))}
@@ -3688,7 +3688,7 @@ function OrderCard({
               e.stopPropagation()
               toggleClusterPin(pedido.clusterId)
             }}
-            className={`w-4 h-4 rounded flex items-center justify-center text-[9px] transition-all ${
+            className={`w-5 h-5 rounded flex items-center justify-center text-[10px] transition-all ${
               visibleClusters.includes(pedido.clusterId)
                 ? `${pedido.clusterColor.badge} text-white`
                 : 'bg-white hover:bg-gray-100'
@@ -3768,16 +3768,16 @@ function OrderCard({
         )}
       </div>
 
-      {/* Ações (não exibidas em pedidos finalizados) */}
+      {/* Ações (não exibidas em pedidos finalizados) — alvos de toque ≥40px */}
       {!isDone && (
-        <div className="flex gap-1.5 pt-1.5 border-t border-gray-100 mt-auto">
+        <div className="flex gap-2 pt-2 border-t border-gray-100 mt-auto">
           <button
             onClick={(e) => {
               e.stopPropagation()
               onPrint()
             }}
             disabled={printStatus?.status === 'printing'}
-            className={`rounded p-1.5 text-sm transition-colors focus:outline-none focus:ring-2 ${
+            className={`rounded-lg p-3 text-base transition-colors focus:outline-none focus:ring-2 ${
               printStatus?.status === 'printing'
                 ? 'cursor-wait bg-violet-100 text-violet-700'
                 : printStatus?.status === 'failed'
@@ -3817,7 +3817,7 @@ function OrderCard({
               onAdvance()
             }}
             disabled={isLoading}
-            className={`flex-1 py-1.5 rounded text-xs font-black text-white transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-900/40 ${
+            className={`flex-1 py-3 rounded-lg text-sm font-black text-white transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-900/40 ${
               isLoading
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-gray-900 hover:bg-black'
@@ -3835,7 +3835,7 @@ function OrderCard({
               <>
                 {orderAction?.shortLabel || 'ATUALIZAR'}{' '}
                 <i
-                  className={`fas ${orderAction?.icon || 'fa-arrow-right'} text-[10px] ml-1`}
+                  className={`fas ${orderAction?.icon || 'fa-arrow-right'} text-xs ml-1`}
                   aria-hidden="true"
                 ></i>
               </>
