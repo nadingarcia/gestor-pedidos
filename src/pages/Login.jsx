@@ -60,10 +60,12 @@ export default function Login() {
 
   const handlePhoneChange = useCallback((e) => {
     setTelefone(formatPhone(e.target.value))
+    setState((prev) => (prev.error ? { ...prev, error: '' } : prev))
   }, [])
 
   const handlePasswordChange = useCallback((e) => {
     setPassword(e.target.value)
+    setState((prev) => (prev.error ? { ...prev, error: '' } : prev))
   }, [])
 
   const togglePasswordVisibility = useCallback(() => {
@@ -169,7 +171,7 @@ export default function Login() {
       }
 
       setState({ loading: false, success: true, error: '' })
-      setTimeout(() => navigate('/pedidos'), 1200)
+      setTimeout(() => navigate('/pedidos'), 500)
 
     } catch (err) {
       setState({ 
@@ -219,43 +221,46 @@ export default function Login() {
         icon: 'fa-columns',
         title: 'Kanban em tempo real',
         desc: 'Recebido → Preparo → Entrega → Entregue. Avance pedidos com um clique.',
-        color: 'purple'
+        colors: 'bg-purple-50 border-purple-200 text-purple-600'
       },
       {
         icon: 'fa-tv',
         title: 'Display de cozinha',
         desc: 'Segunda tela via HDMI. Cozinheiro vê os pedidos sem perguntar nada ao caixa.',
-        color: 'blue'
+        colors: 'bg-blue-50 border-blue-200 text-blue-600'
       },
       {
         icon: 'fa-print',
         title: 'Impressão automática',
         desc: 'Cupom térmico 80mm imprime sozinho ao aceitar o pedido.',
-        color: 'emerald'
+        colors: 'bg-emerald-50 border-emerald-200 text-emerald-600'
       },
       {
         icon: 'fa-whatsapp fab',
         title: 'NexBot WhatsApp',
         desc: 'Notifica o cliente automaticamente a cada mudança de status.',
-        color: 'green'
+        colors: 'bg-green-50 border-green-200 text-green-600'
       },
       {
         icon: 'fa-route',
         title: 'Rotas otimizadas',
         desc: 'Agrupa entregas próximas e gera rota no Google Maps com múltiplas paradas.',
-        color: 'orange'
+        colors: 'bg-orange-50 border-orange-200 text-orange-600'
       },
-    ].map((item, i) => (
-      <li key={i} className="flex items-start gap-4">
-        <div className={`flex-shrink-0 w-10 h-10 rounded-lg bg-${item.color}-50 border border-${item.color}-200 flex items-center justify-center`}>
-          <i className={`fas ${item.icon} text-${item.color}-600`}></i>
-        </div>
-        <div>
-          <h4 className="font-semibold text-gray-900 text-sm">{item.title}</h4>
-          <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{item.desc}</p>
-        </div>
-      </li>
-    ))}
+    ].map((item, i) => {
+      const [bgClass, borderClass, textClass] = item.colors.split(' ')
+      return (
+        <li key={i} className="flex items-start gap-4">
+          <div className={`flex-shrink-0 w-10 h-10 rounded-lg ${bgClass} border ${borderClass} flex items-center justify-center`}>
+            <i className={`fas ${item.icon} ${textClass}`}></i>
+          </div>
+          <div>
+            <h4 className="font-semibold text-gray-900 text-sm">{item.title}</h4>
+            <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{item.desc}</p>
+          </div>
+        </li>
+      )
+    })}
   </ul>
 
 </aside>
@@ -372,6 +377,7 @@ export default function Login() {
                       value={telefone}
                       onChange={handlePhoneChange}
                       placeholder="(11) 99999-9999"
+                      autoFocus
                       aria-invalid={state.error ? 'true' : 'false'}
                       aria-describedby={state.error ? errorId : undefined}
                       autoComplete="tel"

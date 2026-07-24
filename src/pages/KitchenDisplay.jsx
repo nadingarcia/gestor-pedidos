@@ -82,6 +82,7 @@ export default function KitchenDisplay() {
     readJsonStorage(KITCHEN_PREFS_KEY, {
       kitchenOnly: true,
       showBatch: true,
+      largeText: false,
     })
   )
   const [readyItems, setReadyItems] = useState(() =>
@@ -216,6 +217,20 @@ export default function KitchenDisplay() {
               <i className="fas fa-utensils mr-1.5" aria-hidden="true"></i>
               Somente cozinha
             </button>
+            <button
+              type="button"
+              onClick={() => setPrefs((prev) => ({ ...prev, largeText: !prev.largeText }))}
+              className={`h-9 px-3 rounded-lg border text-xs font-black transition-colors ${
+                prefs.largeText
+                  ? 'bg-blue-500/20 border-blue-400 text-blue-200'
+                  : 'bg-gray-900 border-gray-700 text-gray-400'
+              }`}
+              title="Aumenta o texto dos cards para leitura à distância"
+              aria-pressed={prefs.largeText}
+            >
+              <i className="fas fa-text-height mr-1.5" aria-hidden="true"></i>
+              Fonte Grande
+            </button>
             <span className="hidden sm:inline-flex items-center gap-2 text-gray-400 text-sm">
               <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
               {new Date(now).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -285,7 +300,11 @@ export default function KitchenDisplay() {
                     </span>
                   </div>
 
-                  <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div
+                    className={`grid gap-4 grid-cols-1 md:grid-cols-2 ${
+                      prefs.largeText ? 'xl:grid-cols-2 2xl:grid-cols-3' : 'xl:grid-cols-3 2xl:grid-cols-4'
+                    }`}
+                  >
                     {typeOrders.map((pedido) => (
                       <KitchenOrderCard
                         key={pedido._id}
@@ -293,6 +312,7 @@ export default function KitchenDisplay() {
                         now={now}
                         typeConfig={config}
                         kitchenOnly={prefs.kitchenOnly}
+                        largeText={prefs.largeText}
                         readyItems={readyItems}
                         onToggleReady={toggleReady}
                       />
@@ -308,7 +328,7 @@ export default function KitchenDisplay() {
   )
 }
 
-function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, readyItems, onToggleReady }) {
+function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, largeText, readyItems, onToggleReady }) {
   const mins = Math.floor((now - new Date(pedido.createdAt)) / 60000)
   const isUrgent = mins >= 30
   const isWarning = mins >= 20 && mins < 30
@@ -338,7 +358,9 @@ function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, readyItems, on
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-2xl font-black tracking-tight">#{getOrderNumber(pedido)}</span>
+            <span className={`font-black tracking-tight ${largeText ? 'text-4xl' : 'text-2xl'}`}>
+              #{getOrderNumber(pedido)}
+            </span>
             {allReady && (
               <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-500 text-emerald-950 px-2 py-1 rounded-full">
                 pronto
@@ -355,22 +377,26 @@ function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, readyItems, on
               </span>
             )}
           </div>
-          <p className="text-gray-400 text-sm mt-1 truncate">
+          <p className={`text-gray-400 mt-1 truncate ${largeText ? 'text-base' : 'text-sm'}`}>
             {kitchenOnly ? formatTime(pedido.createdAt) : `${pedido.cliente?.nome || 'Consumidor'} · ${formatTime(pedido.createdAt)}`}
           </p>
         </div>
 
-        <span className={`text-lg font-black px-3 py-1.5 rounded-xl tabular-nums min-w-[58px] text-center ${timeBadgeStyle}`}>
+        <span
+          className={`font-black rounded-xl tabular-nums text-center ${timeBadgeStyle} ${
+            largeText ? 'text-2xl px-4 py-2 min-w-[72px]' : 'text-lg px-3 py-1.5 min-w-[58px]'
+          }`}
+        >
           {mins}m
         </span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${typeConfig.badge}`}>
+        <span className={`font-bold px-2.5 py-1 rounded-full border ${typeConfig.badge} ${largeText ? 'text-sm' : 'text-xs'}`}>
           <i className={`fas ${typeConfig.icon} mr-1`} aria-hidden="true"></i>
           {typeConfig.label || getTipoPedidoLabel(pedido.tipo)}
         </span>
-        <span className="text-xs text-gray-400">
+        <span className={`text-gray-400 ${largeText ? 'text-sm' : 'text-xs'}`}>
           {readyCount}/{items.length} item(ns) prontos
         </span>
       </div>
@@ -393,23 +419,27 @@ function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, readyItems, on
               title="Clique ou pressione Enter para marcar este item como pronto"
             >
               {obs && (
-                <div className="mb-2 text-sm text-yellow-200 bg-yellow-950/80 border border-yellow-400/30 px-3 py-2 rounded-lg font-bold">
+                <div className={`mb-2 text-yellow-200 bg-yellow-950/80 border border-yellow-400/30 px-3 py-2 rounded-lg font-bold ${largeText ? 'text-lg' : 'text-sm'}`}>
                   <i className="fas fa-triangle-exclamation mr-1.5" aria-hidden="true"></i>
                   {obs}
                 </div>
               )}
 
               <div className="flex gap-3 items-start">
-                <span className="text-sm font-black text-orange-400 min-w-[38px] bg-orange-500/10 border border-orange-500/20 rounded-lg px-2 py-1 text-center">
+                <span
+                  className={`font-black text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-lg text-center ${
+                    largeText ? 'text-xl min-w-[52px] px-2.5 py-1.5' : 'text-sm min-w-[38px] px-2 py-1'
+                  }`}
+                >
                   {item.quantidade}x
                 </span>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
-                    <p className={`text-sm font-bold leading-tight break-words ${itemReady ? 'line-through text-gray-400' : 'text-white'}`}>
+                    <p className={`font-bold leading-tight break-words ${itemReady ? 'line-through text-gray-400' : 'text-white'} ${largeText ? 'text-xl' : 'text-sm'}`}>
                       {cleanName(item.nome)}
                     </p>
-                    <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-full ${itemReady ? 'bg-emerald-500 text-emerald-950' : 'bg-gray-800 text-gray-400'}`}>
+                    <span className={`shrink-0 font-black px-2 py-1 rounded-full ${itemReady ? 'bg-emerald-500 text-emerald-950' : 'bg-gray-800 text-gray-400'} ${largeText ? 'text-xs' : 'text-[10px]'}`}>
                       {itemReady ? 'pronto' : 'marcar pronto'}
                     </span>
                   </div>
@@ -421,7 +451,7 @@ function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, readyItems, on
                           cada unidade:
                         </p>
                       )}
-                      <p className={`text-sm ${itemReady ? 'text-gray-500 line-through' : 'text-gray-400'}`}>
+                      <p className={`${itemReady ? 'text-gray-500 line-through' : 'text-gray-400'} ${largeText ? 'text-base' : 'text-sm'}`}>
                         + {item.complementos.join(', ')}
                       </p>
                     </div>

@@ -16,6 +16,7 @@ import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch } from '../utils/apiFetch'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 import packageInfo from '../../package.json'
+import notificationSoundUrl from '../assets/notification.mp3'
 import {
   TIPO_PEDIDO_BALCAO,
   TIPO_PEDIDO_DELIVERY,
@@ -40,9 +41,7 @@ const globalProcessedIds = new Set()
  * preload="auto" faz o browser baixar o arquivo imediatamente,
  * eliminando o delay na primeira notificação.
  */
-const notificationAudio = new Audio(
-  'https://painel.nexfood.app/sounds/notification.mp3'
-)
+const notificationAudio = new Audio(notificationSoundUrl)
 notificationAudio.preload = 'auto'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -835,14 +834,12 @@ export default function OrderManager() {
     setToasts((prev) => prev.filter((toast) => toast.id !== id))
   }, [])
 
+  // Dismissal fica a cargo do próprio <Toast> (via onDismiss), que pausa a
+  // contagem quando o mouse está em cima — por isso não há setTimeout aqui.
   const addToast = useCallback((message, type = 'info', duration = 6000, action = null) => {
     const id = `${Date.now()}-${Math.random()}`
     setToasts((prev) => [...prev, { id, message, type, duration, action }])
-    setTimeout(
-      () => removeToast(id),
-      duration
-    )
-  }, [removeToast])
+  }, [])
 
   useEffect(() => {
     localStorage.setItem(PRINT_STATUS_KEY, JSON.stringify(printStatuses))
@@ -885,12 +882,22 @@ export default function OrderManager() {
   // ── Ref do AbortController para cancelar fetches obsoletos ───────────────
   const abortControllerRef = useRef(null)
 
+  // ── Refs das sidebars de filtros/configurações — fecham com ESC ou clique fora ─
+  const filtersPanelRef = useRef(null)
+  const filtersButtonRef = useRef(null)
+  const settingsPanelRef = useRef(null)
+  const settingsButtonRef = useRef(null)
+
+  // ── Refs dos campos de busca (desktop/mobile) — atalho de teclado "/" ─────
+  const desktopSearchRef = useRef(null)
+  const mobileSearchRef = useRef(null)
+
   const navigate = useNavigate()
   const nexBotStatus = useNexBotStatus()
   const restaurantConfig = useRestaurantConfig()
   const { isOnline, wasOffline } = useOnlineStatus()
   const accountInfo = useMemo(() => {
-    let user = {}
+    let user
     try {
       user = JSON.parse(
         localStorage.getItem('nexfood_user') ||
@@ -1024,6 +1031,64 @@ useEffect(() => {
     document.addEventListener('fullscreenchange', handleChange)
     return () => document.removeEventListener('fullscreenchange', handleChange)
   }, [])
+
+  // ── Sidebars de filtros/configurações: fecham com clique fora ─────────────
+  useEffect(() => {
+    if (!showFilters && !showSettings) return
+
+    const isOutside = (target) =>
+      !filtersPanelRef.current?.contains(target) &&
+      !filtersButtonRef.current?.contains(target) &&
+      !settingsPanelRef.current?.contains(target) &&
+      !settingsButtonRef.current?.contains(target)
+
+    const handlePointerDown = (e) => {
+      if (isOutside(e.target)) {
+        setShowFilters(false)
+        setShowSettings(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [showFilters, showSettings])
+
+  // ── Atalhos de teclado globais ─────────────────────────────────────────────
+  // "/" foca a busca (padrão de painéis operacionais). ESC fecha sidebars
+  // abertas ou, se a busca estiver focada com texto, limpa e desfoca.
+  useEffect(() => {
+    const isTypingContext = (el) =>
+      el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (showFilters || showSettings) {
+          setShowFilters(false)
+          setShowSettings(false)
+          return
+        }
+        const isSearchFocused =
+          document.activeElement === desktopSearchRef.current ||
+          document.activeElement === mobileSearchRef.current
+        if (isSearchFocused && searchQuery) {
+          setSearchQuery('')
+          document.activeElement.blur()
+        }
+        return
+      }
+
+      if (e.key === '/' && !isTypingContext(document.activeElement)) {
+        e.preventDefault()
+        const visibleInput = [desktopSearchRef.current, mobileSearchRef.current].find(
+          (el) => el && el.offsetParent !== null
+        )
+        visibleInput?.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [showFilters, showSettings, searchQuery])
 
   // ── Bloqueio de suspensão enquanto o gestor estiver aberto ───────────────
   useEffect(() => {
@@ -1202,7 +1267,7 @@ useEffect(() => {
             lastAttemptAt: Date.now(),
             error: 'Pop-up de impressão bloqueado.',
           })
-          alert('Pop-up bloqueado! Permita pop-ups para este site.')
+          addToast('Pop-up bloqueado! Permita pop-ups para este site.', 'error', 10000)
           return false
         }
         w.document.open()
@@ -1232,7 +1297,7 @@ useEffect(() => {
         })
       }
     },
-    [restaurantConfig, printWithFeedback, updatePrintStatus]
+    [restaurantConfig, printWithFeedback, updatePrintStatus, addToast]
   )
 
   // ── Impressão de etiquetas de sacola ──────────────────────────────────────
@@ -1248,7 +1313,7 @@ const handlePrintBagLabels = useCallback(
         etiquetasEnviadas++
       } else {
         const w = window.open('', '_blank', 'width=380,height=500')
-        if (!w) { alert('Pop-up bloqueado! Permita pop-ups para este site.'); break }
+        if (!w) { addToast('Pop-up bloqueado! Permita pop-ups para este site.', 'error', 10000); break }
         w.document.open()
         w.document.write(html)
         w.document.close()
@@ -1533,7 +1598,7 @@ const handlePrintBagLabels = useCallback(
         addToast(
           getOrderAction(pedido)?.successLabel || 'Status do pedido atualizado.',
           'success',
-          8000,
+          15000,
           {
             label: 'Desfazer',
             onClick: async () => {
@@ -1769,6 +1834,17 @@ const handlePrintBagLabels = useCallback(
     [columns.concluido]
   )
 
+  // ── Alarme recorrente para pedido novo aguardando aceite ──────────────────
+  // Um beep único se perde num caixa/cozinha barulhento. Enquanto houver
+  // pedido em "Recebido" pendente de aceite manual, repete o som até o
+  // operador aceitar — evita pedido esquecido na fila.
+  const pendingAcceptCount = columns.pendente.length
+  useEffect(() => {
+    if (settings.aceitarAutomatico || pendingAcceptCount === 0) return
+    const interval = setInterval(() => playNotificationSound(), 25000)
+    return () => clearInterval(interval)
+  }, [settings.aceitarAutomatico, pendingAcceptCount, playNotificationSound])
+
   const toggleFullScreen = useCallback(() => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch((err) =>
@@ -1980,7 +2056,7 @@ const handlePrintBagLabels = useCallback(
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <TickProvider>
-      <div className="min-h-screen bg-white text-gray-900 flex flex-col">
+      <div className="h-screen overflow-hidden bg-white text-gray-900 flex flex-col">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <header className="sticky top-0 z-30 bg-white border-b border-gray-200 shadow-sm shrink-0">
@@ -2033,10 +2109,11 @@ const handlePrintBagLabels = useCallback(
             <div className="flex-1 max-w-md hidden lg:block">
               <div className="relative">
                 <input
+                  ref={desktopSearchRef}
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar por nº do pedido, cliente ou últimos dígitos do telefone..."
+                  placeholder="Buscar por nº do pedido, cliente ou últimos dígitos do telefone... (/)"
                   className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 transition-all"
                   aria-label="Buscar pedidos"
                 />
@@ -2137,6 +2214,7 @@ const handlePrintBagLabels = useCallback(
 
               {/* Filtros */}
               <button
+                ref={filtersButtonRef}
                 onClick={() => {
                   setShowFilters(!showFilters)
                   setShowSettings(false)
@@ -2191,6 +2269,7 @@ const handlePrintBagLabels = useCallback(
 
               {/* Configurações */}
               <button
+                ref={settingsButtonRef}
                 onClick={() => {
                   setShowSettings(!showSettings)
                   setShowFilters(false)
@@ -2213,6 +2292,7 @@ const handlePrintBagLabels = useCallback(
           <div className="lg:hidden px-4 pb-3">
             <div className="relative">
               <input
+                ref={mobileSearchRef}
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -2240,7 +2320,7 @@ const handlePrintBagLabels = useCallback(
         </header>
 
         {/* ── Corpo principal ────────────────────────────────────────────── */}
-        <div className="flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0">
 
           {/* Kanban Board */}
           <main
@@ -2251,7 +2331,7 @@ const handlePrintBagLabels = useCallback(
             aria-label="Quadro Kanban de pedidos"
           >
             <div
-              className={`grid gap-4 h-full transition-all ${
+              className={`grid gap-4 h-full min-h-0 auto-rows-fr transition-all ${
                 settings.aceitarAutomatico
                   ? finishedColumnCollapsed
                     ? 'grid-cols-[1fr_1fr_80px]'
@@ -2269,6 +2349,7 @@ const handlePrintBagLabels = useCallback(
                   color="purple"
                   icon="bell"
                   columnWidth="narrow"
+                  isAlerting={pendingAcceptCount > 0}
                 >
                   {columns.pendente.map((p) => (
                     <OrderCard
@@ -2379,8 +2460,9 @@ const handlePrintBagLabels = useCallback(
 
           {/* ── Sidebar: Filtros Avançados ──────────────────────────────── */}
           <aside
+            ref={filtersPanelRef}
             id="sidebar-filtros"
-            className={`fixed top-[81px] right-0 h-[calc(100vh-81px)] w-96 bg-white border-l border-gray-200 shadow-xl transition-all duration-300 z-40 overflow-y-auto ${
+            className={`absolute top-0 right-0 h-full w-96 bg-white border-l border-gray-200 shadow-xl transition-all duration-300 z-40 overflow-y-auto ${
               showFilters && !showSettings ? 'translate-x-0' : 'translate-x-full'
             }`}
             aria-hidden={!(showFilters && !showSettings)}
@@ -2538,8 +2620,9 @@ const handlePrintBagLabels = useCallback(
 
           {/* ── Sidebar: Configurações ─────────────────────────────────── */}
           <aside
+            ref={settingsPanelRef}
             id="sidebar-configuracoes"
-            className={`fixed top-[81px] right-0 h-[calc(100vh-81px)] w-96 bg-white border-l border-gray-200 shadow-xl transition-all duration-300 z-40 overflow-y-auto ${
+            className={`absolute top-0 right-0 h-full w-96 bg-white border-l border-gray-200 shadow-xl transition-all duration-300 z-40 overflow-y-auto ${
               showSettings && !showFilters ? 'translate-x-0' : 'translate-x-full'
             }`}
             aria-hidden={!(showSettings && !showFilters)}
@@ -3262,6 +3345,7 @@ function KanbanColumn({
   isCollapsed,
   onToggleCollapse,
   columnWidth = 'normal',
+  isAlerting = false,
 }) {
   const colorThemes = {
     purple: 'border-[#7f22fe] bg-purple-50',
@@ -3282,11 +3366,11 @@ function KanbanColumn({
 
   return (
     <div
-      className={`flex flex-col h-full rounded-xl bg-gray-100/50 border border-gray-200 overflow-hidden shadow-sm transition-all ${
-        isCollapsed ? 'max-w-[80px]' : ''
-      }`}
+      className={`flex flex-col h-full rounded-xl bg-gray-100/50 border overflow-hidden shadow-sm transition-all ${
+        isAlerting ? 'border-rose-400 animate-pulse-glow' : 'border-gray-200'
+      } ${isCollapsed ? 'max-w-[80px]' : ''}`}
       role="region"
-      aria-label={`Coluna ${title}: ${count} pedidos`}
+      aria-label={`Coluna ${title}: ${count} pedidos${isAlerting ? '. Aguardando aceite' : ''}`}
     >
       {/* Cabeçalho da coluna */}
       <div
@@ -3458,7 +3542,7 @@ function OrderCard({
             title={countdownTooltip}
             aria-label={countdownTooltip}
           >
-            {countdown.isLate ? '⚠ ATRASADO' : countdown.display}
+            {countdown.isLate ? `⚠ ${countdown.overdueMinutes}min ATRASADO` : countdown.display}
           </span>
         )}
 
@@ -4283,17 +4367,33 @@ function OrderModal({
 function Toast({ toast, onDismiss }) {
   const [progress, setProgress] = useState(100)
   const [actionLoading, setActionLoading] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
+
+  // Tempo restante em ms — sobrevive a pausas do hover, decrementado pelo
+  // tempo real decorrido a cada tick (não por uma contagem fixa de ticks).
+  const remainingRef = useRef(toast.duration || 6000)
+  const lastTickRef = useRef(Date.now())
 
   useEffect(() => {
-    const duration = toast.duration || 6000
-    const start = Date.now()
+    if (isPaused) return
+
+    const totalDuration = toast.duration || 6000
+    lastTickRef.current = Date.now()
+
     const id = setInterval(() => {
-      const elapsed = Date.now() - start
-      const pct = Math.max(0, 100 - (elapsed / duration) * 100)
-      setProgress(pct)
+      const now = Date.now()
+      remainingRef.current = Math.max(0, remainingRef.current - (now - lastTickRef.current))
+      lastTickRef.current = now
+      setProgress(Math.max(0, (remainingRef.current / totalDuration) * 100))
+
+      if (remainingRef.current <= 0) {
+        clearInterval(id)
+        onDismiss(toast.id)
+      }
     }, 50)
+
     return () => clearInterval(id)
-  }, [toast.duration])
+  }, [isPaused, toast.duration, toast.id, onDismiss])
 
   const styles = {
     success: { bar: 'bg-emerald-500', box: 'bg-white border-emerald-300 text-emerald-900', icon: 'fa-check-circle text-emerald-500' },
@@ -4315,7 +4415,11 @@ function Toast({ toast, onDismiss }) {
   }
 
   return (
-    <div className={`relative overflow-hidden flex items-start gap-3 p-4 rounded-xl border shadow-xl text-sm font-medium ${s.box}`}>
+    <div
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      className={`relative overflow-hidden flex items-start gap-3 p-4 rounded-xl border shadow-xl text-sm font-medium ${s.box}`}
+    >
       <i className={`fas ${s.icon} mt-0.5 shrink-0 text-base`} aria-hidden="true"></i>
       <span className="flex-1 leading-relaxed">{toast.message}</span>
       {toast.action && (
