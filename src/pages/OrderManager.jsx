@@ -11,7 +11,6 @@ import { useNavigate } from 'react-router-dom'
 import electronAPI from '@utils/electronBridge'
 import { useOrderClustering } from '@hooks/useOrderClustering'
 import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
-import { notifyOrderStatus } from '@utils/nexBotNotify'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch } from '../utils/apiFetch'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
@@ -1397,6 +1396,9 @@ const handlePrintBagLabels = useCallback(
       `https://painel.nexfood.app/api/pedidos/${id}/status`,
       {
         method: 'PATCH',
+        // O backend passa a avisar o cliente (push ou WhatsApp via NexBot).
+        // Sem este header ele trata como gestor antigo e não avisa.
+        headers: { 'X-Avisos-Cliente': 'backend' },
         body: JSON.stringify({ status }),
       }
     )
@@ -1586,7 +1588,6 @@ const handlePrintBagLabels = useCallback(
 
       try {
         await apiUpdateStatus(pedido._id, nextStatus)
-        notifyOrderStatus(pedido, nextStatus, nexBotStatus)
 
         let boxDeliveryDispatch = null
         if (nextStatus === 'Em preparação') {
@@ -1674,7 +1675,7 @@ const handlePrintBagLabels = useCallback(
         setLoadingOrderId(null)
       }
     },
-    [nexBotStatus, handlePrint, callBoxDelivery, fetchPedidos, addToast]
+    [handlePrint, callBoxDelivery, fetchPedidos, addToast]
   )
 
   // ── Toggle de notificações push (solicita permissão se necessário) ────────
@@ -3090,20 +3091,14 @@ const handlePrintBagLabels = useCallback(
           nexBotStatus={nexBotStatus}
           onClose={() => setMotoboyModalTarget(null)}
           onAtribuido={async () => {
-            // Motoboy atribuído com sucesso — avança e notifica com tracking
+            // Motoboy atribuído com sucesso — avança (o backend avisa o cliente, com rastreio)
             await apiUpdateStatus(motoboyModalTarget._id, 'Saiu para entrega')
-            notifyOrderStatus(
-              { ...motoboyModalTarget, temMotoboy: true },
-              'Saiu para entrega',
-              nexBotStatus
-            )
             setMotoboyModalTarget(null)
             fetchPedidos()
           }}
           onSkip={async () => {
             // Sem motoboy — avança normalmente
             await apiUpdateStatus(motoboyModalTarget._id, 'Saiu para entrega')
-            notifyOrderStatus(motoboyModalTarget, 'Saiu para entrega', nexBotStatus)
             setMotoboyModalTarget(null)
             fetchPedidos()
           }}
