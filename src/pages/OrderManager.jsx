@@ -28,8 +28,8 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLETONS DE MÓDULO
 // Criados uma única vez quando o bundle carrega.
-// Sobrevivem a remounts do componente — evitam dupla impressão e dupla chamada
-// à Box Delivery mesmo que React desmonte e remonte (StrictMode, troca de rota).
+// Sobrevivem a remounts do componente — evitam dupla impressão
+// mesmo que React desmonte e remonte (StrictMode, troca de rota).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Set global de IDs já processados — persiste entre remounts */
@@ -160,6 +160,22 @@ const hasOrderObservation = (pedido) =>
     String(item?.observacao || item?.observacoes || item?.obs || '').trim()
   )
 
+// (31) 99100-0042 — aceita com ou sem o 55 na frente; formato desconhecido volta como veio
+const formatTelefone = (value) => {
+  let digits = String(value || '').replace(/\D/g, '')
+  if ((digits.length === 12 || digits.length === 13) && digits.startsWith('55')) digits = digits.slice(2)
+  if (digits.length === 11) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+  if (digits.length === 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`
+  return value || ''
+}
+
+// trocoPara = valor da nota com que o cliente vai pagar (não o troco em si)
+const getTrocoInfo = (pedido) => {
+  const pagaCom = Number(pedido?.trocoPara || 0)
+  const troco = Math.round((pagaCom - Number(pedido?.total || 0)) * 100) / 100
+  return { pagaCom, troco: troco > 0 ? troco : 0 }
+}
+
 const getPaymentInfo = (pedido) => {
   const method = String(pedido?.formaPagamento || '').toLowerCase()
   const status = String(pedido?.statusPagamento || '').toLowerCase()
@@ -194,9 +210,12 @@ const getPaymentInfo = (pedido) => {
   }
 
   if (method === 'dinheiro' && Number(pedido?.trocoPara) > 0) {
+    const { pagaCom, troco } = getTrocoInfo(pedido)
     return {
-      label: `DINHEIRO · TROCO R$ ${Number(pedido.trocoPara).toFixed(2).replace('.', ',')}`,
-      shortLabel: `TROCO R$ ${Number(pedido.trocoPara).toFixed(2).replace('.', ',')}`,
+      label: troco > 0
+        ? `DINHEIRO · PAGA COM ${formatCurrency(pagaCom)} · LEVAR ${formatCurrency(troco)} DE TROCO`
+        : `DINHEIRO · PAGA COM ${formatCurrency(pagaCom)}`,
+      shortLabel: troco > 0 ? `LEVAR TROCO ${formatCurrency(troco)}` : `PAGA C/ ${formatCurrency(pagaCom)}`,
       className: 'bg-blue-50 text-blue-700 border-blue-200',
       icon: 'fa-money-bill-wave',
     }
@@ -698,7 +717,8 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
         <div class="divider"></div>
         <div class="info-label">Pagamento</div>
         <div class="info-value">${formaPagamentoHtml}</div>
-        ${pedido.trocoPara ? `<div class="info-sub">Troco para: ${formatCurrency(pedido.trocoPara)}</div>` : ''}
+        ${Number(pedido.trocoPara) > 0 ? `<div class="info-sub">Paga com: ${formatCurrency(pedido.trocoPara)}</div>` : ''}
+        ${getTrocoInfo(pedido).troco > 0 ? `<div class="info-value">Levar troco: ${formatCurrency(getTrocoInfo(pedido).troco)}</div>` : ''}
 
         <div class="footer">
           ${restauranteNomeHtml} • Obrigado pela preferência!<br/>
@@ -798,7 +818,6 @@ export default function OrderManager() {
   const [printStatuses, setPrintStatuses] = useState(readPrintStatuses)
   const [printingOrderIds, setPrintingOrderIds] = useState(() => new Set())
   const printingOrderIdsRef = useRef(new Set())
-  const [boxDeliveryFailure, setBoxDeliveryFailure] = useState(null)
   const [motoboyAvailability, setMotoboyAvailability] = useState({
     checked: false,
     count: 0,
@@ -861,20 +880,6 @@ export default function OrderManager() {
     [printStatuses, printingOrderIds]
   )
 
-  // ── Box Delivery: lido do storage uma vez (sem volatile deps) ─────────────
-  const boxDeliveryAtivo = useMemo(() => {
-    try {
-      const data = JSON.parse(
-        localStorage.getItem('nexfood_integracoes') ||
-          sessionStorage.getItem('nexfood_integracoes') ||
-          '{}'
-      )
-      return data?.boxDelivery?.ativo === true
-    } catch {
-      return false
-    }
-  }, [])
-
   // ── Ref ao Set global de IDs (singleton de módulo) ────────────────────────
   const processedOrderIds = useRef(globalProcessedIds)
 
@@ -936,8 +941,6 @@ export default function OrderManager() {
     tempoJanela: parseInt(localStorage.getItem('tempoJanela')) || 30,
     capacidadeEntrega:
       parseInt(localStorage.getItem('capacidadeEntrega')) || 4,
-    chamarEntregadorAuto:
-      localStorage.getItem('chamarEntregadorAuto') !== 'false',
     appEntregador: localStorage.getItem('appEntregador') === 'true',
     fonteTamanho: parseInt(localStorage.getItem('fonteTamanho')) || 12,  // ← faltava
     negritar: localStorage.getItem('negritar') === 'true',
@@ -1339,57 +1342,6 @@ const handlePrintBagLabels = useCallback(
   [restaurantConfig, addToast, printWithFeedback]
 )
 
-  // ── Box Delivery: chama entregador na transportadora ─────────────────────
-  const callBoxDelivery = useCallback(
-    async (pedido) => {
-      if (!boxDeliveryAtivo || !settingsRef.current.chamarEntregadorAuto) return
-      if (!isDelivery(pedido)) return
-
-      try {
-        const boxRes = await apiFetch(
-          `https://painel.nexfood.app/api/pedidos/${pedido._id}/box-delivery`,
-          { method: 'POST' }
-        )
-
-        if (boxRes.ok) {
-          const data = await boxRes.json()
-          setBoxDeliveryFailure(null)
-          addToast(
-            `🛵 Entregador chamado! Ref: ${data.boxDelivery?.uuid?.slice(0, 8)}...`,
-            'success'
-          )
-          return data.boxDelivery || null
-        } else {
-          let errData = {}
-          try {
-            errData = await boxRes.json()
-          } catch {}
-
-          const isBalanceError =
-            errData?.code === 'BALANCE_ERROR' || boxRes.status === 400
-          const errorMessage = isBalanceError
-            ? 'Saldo insuficiente na Box Delivery. Recarregue o saldo e entre em contato com a transportadora.'
-            : `${errData.message || 'Falha ao chamar entregador'} (cód: ${errData.code || boxRes.status})`
-
-          setBoxDeliveryFailure({ message: errorMessage, at: Date.now() })
-          addToast(
-            isBalanceError ? `⚠️ ${errorMessage}` : `⚠️ Box Delivery: ${errorMessage}`,
-            isBalanceError ? 'error' : 'warning',
-            isBalanceError ? 14000 : 10000
-          )
-          return null
-        }
-      } catch (boxErr) {
-        console.error('❌ Box Delivery erro:', boxErr)
-        const errorMessage = boxErr?.message || 'Erro ao conectar com a transportadora.'
-        setBoxDeliveryFailure({ message: errorMessage, at: Date.now() })
-        addToast('❌ ' + errorMessage, 'error')
-        return null
-      }
-    },
-    [boxDeliveryAtivo, addToast]
-  )
-
   // ── API: atualiza status de um pedido ─────────────────────────────────────
   const apiUpdateStatus = async (id, status) => {
     const res = await apiFetch(
@@ -1422,7 +1374,7 @@ const handlePrintBagLabels = useCallback(
   // 2. settingsRef.current: lê configurações no momento da execução
   //    sem adicionar deps voláteis ao useCallback.
   // 3. Deps estáveis: [playNotificationSound, sendPushNotification,
-  //    handlePrint, callBoxDelivery, addToast] — todas são useCallbacks com deps
+  //    handlePrint, addToast] — todas são useCallbacks com deps
   //    fixas, então fetchPedidos não é recriado desnecessariamente.
   // ──────────────────────────────────────────────────────────────────────────
   const fetchPedidos = useCallback(async () => {
@@ -1501,7 +1453,6 @@ const handlePrintBagLabels = useCallback(
               'Pedido #' + pedido._id.slice(-4) + ' enviado para cozinha.'
             )
             if (impressoraAutomatica) handlePrint(pedido, { automatic: true })
-            await callBoxDelivery(pedido)
             pedido.status = 'Em preparação'
           } catch (err) {
             console.error('Erro ao aceitar pedido automaticamente:', err)
@@ -1541,7 +1492,7 @@ const handlePrintBagLabels = useCallback(
     } finally {
       setLoading(false)
     }
-  }, [playNotificationSound, sendPushNotification, handlePrint, callBoxDelivery, addToast])
+  }, [playNotificationSound, sendPushNotification, handlePrint, addToast])
 
   useEffect(() => {
     if (isOnline && wasOffline.current) fetchPedidos()
@@ -1589,10 +1540,8 @@ const handlePrintBagLabels = useCallback(
       try {
         await apiUpdateStatus(pedido._id, nextStatus)
 
-        let boxDeliveryDispatch = null
-        if (nextStatus === 'Em preparação') {
-          if (settingsRef.current.impressoraAutomatica) handlePrint(pedido, { automatic: true })
-          if (isDelivery(pedido)) boxDeliveryDispatch = await callBoxDelivery(pedido)
+        if (nextStatus === 'Em preparação' && settingsRef.current.impressoraAutomatica) {
+          handlePrint(pedido, { automatic: true })
         }
 
         await fetchPedidos()
@@ -1619,25 +1568,6 @@ const handlePrintBagLabels = useCallback(
                   return false
                 }
 
-                const boxUuid = boxDeliveryDispatch?.uuid
-                if (boxUuid) {
-                  const cancelRes = await apiFetch(
-                    `https://painel.nexfood.app/api/pedidos/${pedido._id}/box-delivery/cancel`,
-                    {
-                      method: 'POST',
-                      body: JSON.stringify({ boxUuid }),
-                    }
-                  )
-                  if (!cancelRes.ok) {
-                    throw new Error(
-                      await getApiErrorMessage(
-                        cancelRes,
-                        'Não foi possível cancelar o entregador. O status não foi alterado.'
-                      )
-                    )
-                  }
-                }
-
                 await apiUpdateStatus(pedido._id, pedido.status)
                 setPedidos((prev) =>
                   prev.map((item) =>
@@ -1645,12 +1575,7 @@ const handlePrintBagLabels = useCallback(
                   )
                 )
                 await fetchPedidos()
-                addToast(
-                  boxUuid
-                    ? 'Alteração desfeita e chamada do entregador cancelada.'
-                    : 'Alteração de status desfeita.',
-                  'info'
-                )
+                addToast('Alteração de status desfeita.', 'info')
                 return true
               } catch (err) {
                 addToast(err?.message || 'Não foi possível desfazer a alteração.', 'error', 10000)
@@ -1675,7 +1600,7 @@ const handlePrintBagLabels = useCallback(
         setLoadingOrderId(null)
       }
     },
-    [handlePrint, callBoxDelivery, fetchPedidos, addToast]
+    [handlePrint, fetchPedidos, addToast]
   )
 
   // ── Toggle de notificações push (solicita permissão se necessário) ────────
@@ -2003,16 +1928,6 @@ const handlePrintBagLabels = useCallback(
       })
     }
 
-    if (boxDeliveryFailure) {
-      alerts.push({
-        id: 'box-delivery-failure',
-        severity: 'critical',
-        icon: 'fa-motorcycle',
-        label: 'Falha Box Delivery',
-        detail: boxDeliveryFailure.message,
-      })
-    }
-
     if (settings.appEntregador && motoboyAvailability.checked && motoboyAvailability.count === 0) {
       alerts.push({
         id: 'motoboys-offline',
@@ -2040,7 +1955,6 @@ const handlePrintBagLabels = useCallback(
     pedidosPendentes,
     printFailure,
     nexBotStatus,
-    boxDeliveryFailure,
     settings.appEntregador,
     motoboyAvailability,
     isOnline,
@@ -2211,7 +2125,7 @@ const handlePrintBagLabels = useCallback(
                 </span>
               </div>
 
-              <NexBotBadge status={nexBotStatus} />
+              {nexBotStatus === 'online' && <NexBotBadge status={nexBotStatus} />}
 
               {/* Filtros */}
               <button
@@ -2325,9 +2239,7 @@ const handlePrintBagLabels = useCallback(
 
           {/* Kanban Board */}
           <main
-            className={`flex-1 p-6 overflow-x-auto overflow-y-hidden transition-all duration-300 bg-gray-50 ${
-              showSettings || showFilters ? 'mr-96' : ''
-            }`}
+            className="flex-1 p-6 overflow-x-auto overflow-y-hidden bg-gray-50"
             role="main"
             aria-label="Quadro Kanban de pedidos"
           >
@@ -2401,7 +2313,7 @@ const handlePrintBagLabels = useCallback(
 
               {/* Coluna: Em Entrega */}
               <KanbanColumn
-                title="Em Entrega"
+                title="Em entrega · Retirada"
                 count={columns.entrega.length}
                 color="blue"
                 icon="shipping-fast"
@@ -2812,24 +2724,7 @@ const handlePrintBagLabels = useCallback(
             {/* ── Otimização de Entregas ────────────────────────────────── */}
             <AccordionSection id="acc-entregas" icon="route" title="Otimização de Entregas">
 
-              {boxDeliveryAtivo && (
-                <div className="flex items-center justify-between p-4 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-emerald-200">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <i className="fas fa-motorcycle text-emerald-600 text-sm" aria-hidden="true"></i>
-                      <span className="text-sm text-gray-900 font-bold">Chamar Entregador Automático</span>
-                    </div>
-                    <p className="text-xs text-gray-600">Aciona a Box Delivery ao aceitar pedidos Delivery</p>
-                  </div>
-                  <Switch
-                    checked={settings.chamarEntregadorAuto}
-                    onChange={() => saveSettings({ ...settings, chamarEntregadorAuto: !settings.chamarEntregadorAuto })}
-                    ariaLabel="Chamar entregador automaticamente"
-                  />
-                </div>
-              )}
-
-              {/* ✅ App do Entregador — mutuamente exclusivo com Box Delivery */}
+              {/* ✅ App do Entregador */}
               <div className={`flex items-center justify-between p-4 rounded-lg border-2 ${
                 settings.appEntregador
                   ? 'bg-gradient-to-r from-purple-50 to-indigo-50 border-purple-300'
@@ -2839,12 +2734,6 @@ const handlePrintBagLabels = useCallback(
                   <div className="flex items-center gap-2 mb-1">
                     <i className="fas fa-motorcycle text-purple-600 text-sm"></i>
                     <span className="text-sm text-gray-900 font-bold">App do Entregador</span>
-                    {/* ✅ Só aviso, sem bloqueio */}
-                    {settings.appEntregador && boxDeliveryAtivo && (
-                      <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200">
-                        ⚠ Box Delivery ainda ativa
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-gray-600">Atribui pedidos manualmente aos seus motoboys</p>
                 </div>
@@ -2860,11 +2749,7 @@ const handlePrintBagLabels = useCallback(
                         return
                       }
                     }
-                    if (novoEstado && settings.chamarEntregadorAuto) {
-                      saveSettings({ ...settings, appEntregador: true, chamarEntregadorAuto: false })
-                    } else {
-                      saveSettings({ ...settings, appEntregador: novoEstado })
-                    }
+                    saveSettings({ ...settings, appEntregador: novoEstado })
                   }}
                   ariaLabel="Ativar App do Entregador"
                 />
@@ -3468,7 +3353,7 @@ function OrderCard({
     emerald: 'border-l-4 border-l-emerald-500 opacity-60 grayscale-[0.5]',
   }
 
-  const { minutes, isUrgent } = getTimeElapsed(pedido.createdAt)
+  const { minutes } = getTimeElapsed(pedido.createdAt)
   const estimatedMins = isDelivery(pedido) ? 40 : 15
   const countdown = useCountdown(pedido.createdAt, estimatedMins)
   const discountInfo = getDiscountInfo(pedido)
@@ -3479,7 +3364,7 @@ function OrderCard({
 
   // Monta o tooltip do countdown com contexto claro para o operador
   const countdownTooltip = countdown.isLate
-    ? `Pedido atrasado! Passou ${countdown.overdueMinutes} min além do estimado`
+    ? `Pedido atrasado! Feito há ${minutes} min — ${countdown.overdueMinutes} min além dos ${estimatedMins} estimados`
     : countdown.isWarning
     ? `Atenção: menos de 10 minutos restantes (${countdown.display})`
     : `Tempo estimado restante: ${countdown.display}`
@@ -3511,7 +3396,7 @@ function OrderCard({
       }}
       className={`relative bg-white p-3 rounded-lg shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all cursor-pointer border group flex flex-col gap-2 focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
         colorThemes[color]
-      } ${isUrgent && !isDone ? 'ring-1 ring-red-400/60' : ''}`}
+      } ${countdown.isLate && !isDone ? 'ring-1 ring-red-400/60' : ''}`}
       role="button"
       tabIndex={0}
       aria-label={`Pedido #${getOrderNumber(pedido)} — ${pedido.cliente?.nome || 'Consumidor'} — ${pedido.status || 'Recebido'} — ${formatCurrency(pedido.total)}`}
@@ -3537,17 +3422,7 @@ function OrderCard({
             title={countdownTooltip}
             aria-label={countdownTooltip}
           >
-            {countdown.isLate ? `⚠ ${countdown.overdueMinutes}min ATRASADO` : countdown.display}
-          </span>
-        )}
-
-        {isUrgent && !isDone && (
-          <span
-            className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500 text-white shrink-0"
-            aria-label={`Pedido aguarda há ${minutes} minutos`}
-            title={`Pedido aguarda há ${minutes} minutos`}
-          >
-            {minutes}m
+            {countdown.isLate ? `ATRASADO ${countdown.overdueMinutes}min` : countdown.display}
           </span>
         )}
 
@@ -3622,7 +3497,7 @@ function OrderCard({
           </span>
         )}
 
-        {!isDone && (printStatus?.status === 'failed' ? (
+        {!isDone && ['printing', 'failed'].includes(printStatus?.status) && (printStatus.status === 'failed' ? (
           <button
             type="button"
             onClick={(event) => {
@@ -3655,6 +3530,9 @@ function OrderCard({
           ></i>
           <span className="text-[10px] text-gray-500 leading-tight line-clamp-1">
             {pedido.enderecoEntrega.rua}, {pedido.enderecoEntrega.numero}
+            {pedido.enderecoEntrega.complemento
+              ? ` · ${pedido.enderecoEntrega.complemento}`
+              : ''}
             {pedido.enderecoEntrega.bairro
               ? ` · ${pedido.enderecoEntrega.bairro}`
               : ''}
@@ -3702,24 +3580,6 @@ function OrderCard({
           >
             <i className="fas fa-thumbtack" aria-hidden="true"></i>
           </button>
-        </div>
-      )}
-
-      {/* Badge Box Delivery */}
-      {pedido.boxDelivery?.despachado && (
-        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200">
-          <i
-            className="fas fa-motorcycle text-emerald-600 text-[9px]"
-            aria-hidden="true"
-          ></i>
-          <span className="text-[10px] font-bold text-emerald-700">
-            Entregador Chamado
-          </span>
-          {pedido.boxDelivery?.uuid && (
-            <span className="text-[9px] text-emerald-500 ml-auto">
-              #{pedido.boxDelivery.uuid.slice(0, 6)}
-            </span>
-          )}
         </div>
       )}
 
@@ -4082,7 +3942,7 @@ function OrderModal({
                       {currentPedido.cliente?.nome || 'Consumidor'}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {currentPedido.cliente?.telefone || 'Telefone não informado'}
+                      {formatTelefone(currentPedido.cliente?.telefone) || 'Telefone não informado'}
                     </p>
                   </div>
                 </div>
@@ -4108,6 +3968,11 @@ function OrderModal({
                     <p className="text-sm font-bold leading-snug text-gray-900">
                       {currentPedido.enderecoEntrega.rua}, {currentPedido.enderecoEntrega.numero}
                     </p>
+                    {currentPedido.enderecoEntrega.complemento && (
+                      <p className="mt-0.5 text-sm font-bold text-blue-900">
+                        {currentPedido.enderecoEntrega.complemento}
+                      </p>
+                    )}
                     <p className="mt-0.5 text-xs text-gray-600">
                       {currentPedido.enderecoEntrega.bairro}
                       {currentPedido.enderecoEntrega.cidade
@@ -4208,9 +4073,12 @@ function OrderModal({
                       {formatCurrency(currentPedido.total)}
                     </strong>
                   </div>
-                  {currentPedido.trocoPara && (
-                    <div className="rounded-lg bg-blue-50 px-2.5 py-2 text-center font-bold text-blue-800">
-                      Troco para {formatCurrency(currentPedido.trocoPara)}
+                  {Number(currentPedido.trocoPara) > 0 && (
+                    <div className="rounded-lg bg-blue-50 px-2.5 py-2 text-center text-blue-800">
+                      <p className="text-xs">Paga com {formatCurrency(currentPedido.trocoPara)}</p>
+                      {getTrocoInfo(currentPedido).troco > 0 && (
+                        <p className="font-black">Levar {formatCurrency(getTrocoInfo(currentPedido).troco)} de troco</p>
+                      )}
                     </div>
                   )}
                 </div>

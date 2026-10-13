@@ -1,6 +1,6 @@
 # Gestor de Pedidos NexFood
 
-Aplicativo desktop/web para operação de pedidos de restaurantes no ecossistema NexFood. A tela principal organiza os pedidos em Kanban, envia pedidos para a cozinha, imprime cupons térmicos, notifica o cliente pelo NexBot e ajuda a operação de entrega com motoboy próprio ou Box Delivery.
+Aplicativo desktop/web para operação de pedidos de restaurantes no ecossistema NexFood. A tela principal organiza os pedidos em Kanban, envia pedidos para a cozinha, imprime cupons térmicos, notifica o cliente pelo NexBot e ajuda a operação de entrega com motoboy próprio.
 
 ## Funcionalidades
 
@@ -13,7 +13,7 @@ Aplicativo desktop/web para operação de pedidos de restaurantes no ecossistema
 - Modal completo do pedido com itens, adicionais, observações, endereço e histórico operacional.
 - Separação de pedidos Pix pendentes/recusados para evitar produção antes da confirmação.
 - Cache local dos pedidos do dia para reduzir tela vazia e apoiar leitura durante instabilidade.
-- Indicadores de operação: pedidos atrasados, Pix recusado, NexBot offline, Box Delivery, motoboys e modo cache.
+- Indicadores de operação: pedidos atrasados, Pix recusado, NexBot offline, motoboys e modo cache.
 
 ### Impressão
 
@@ -41,7 +41,6 @@ Aplicativo desktop/web para operação de pedidos de restaurantes no ecossistema
 - Painéis flutuantes para clusters de rota.
 - Avanço de pedidos agrupados.
 - Link de rota no Google Maps pelo modal.
-- Integração com Box Delivery para chamar/cancelar entrega quando habilitada no restaurante.
 - Integração com app de entregador NexFood para consultar motoboys disponíveis e atribuir entrega.
 
 ### NexBot e Notificações
@@ -194,8 +193,6 @@ Base atual: `https://painel.nexfood.app/api`.
 - `GET /pedidos/dia`: lista pedidos do dia.
 - `GET /pedidos/:id`: consulta pedido.
 - `PATCH /pedidos/:id/status`: atualiza status do pedido.
-- `POST /pedidos/:id/box-delivery`: chama Box Delivery.
-- `POST /pedidos/:id/box-delivery/cancel`: cancela chamada Box Delivery.
 - `GET /motoboy/fila?restauranteSlug=...`: lista motoboys disponíveis.
 - `POST /motoboy/atribuir-entrega`: atribui motoboy ao pedido.
 - `GET /bot/restaurant/status`: consulta status do NexBot.
