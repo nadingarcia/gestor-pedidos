@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import electronAPI from '@utils/electronBridge'
 import { getTipoPedidoLabel, isDelivery } from '@utils/orderType'
+import { linhaComplemento } from '../utils/complementos'
 
 const KITCHEN_PREFS_KEY = 'nexfood_kitchen_display_prefs'
 const KITCHEN_READY_KEY = 'nexfood_kitchen_ready_items'
@@ -452,7 +453,7 @@ function KitchenOrderCard({ pedido, now, typeConfig, kitchenOnly, largeText, rea
                         </p>
                       )}
                       <p className={`${itemReady ? 'text-gray-500 line-through' : 'text-gray-400'} ${largeText ? 'text-base' : 'text-sm'}`}>
-                        + {item.complementos.join(', ')}
+                        {item.complementos.map(linhaComplemento).join(', ')}
                       </p>
                     </div>
                   )}

@@ -16,6 +16,7 @@ import { apiFetch } from '../utils/apiFetch'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 import packageInfo from '../../package.json'
 import notificationSoundUrl from '../assets/notification.mp3'
+import { linhaComplemento } from '../utils/complementos'
 import {
   TIPO_PEDIDO_BALCAO,
   TIPO_PEDIDO_DELIVERY,
@@ -594,7 +595,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
       )
       const complementosHtml = item.complementos?.length
       ? `${item.quantidade > 1 ? '<div class="complementos-label">cada un.:</div>' : ''}
-        <div class="complementos">${item.complementos.map(c => `+ ${escapeHtml(c)}`).join('<br/>')}</div>`
+        <div class="complementos">${item.complementos.map(c => escapeHtml(linhaComplemento(c))).join('<br/>')}</div>`
       : ''
       const obsHtml = item.obs
         ? `<div class="obs"><strong>OBS:</strong> ${escapeHtml(item.obs)}</div>`
@@ -4197,7 +4198,7 @@ function OrderModal({
                               Cada unidade:
                             </span>
                           )}
-                          + {item.complementos.join(', ')}
+                          {item.complementos.map(linhaComplemento).join(', ')}
                         </div>
                       )}
                       {item.obs && (
