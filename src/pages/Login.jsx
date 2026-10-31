@@ -1,7 +1,8 @@
 import { useState, useCallback, useId, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { API_PRINCIPAL, fetchComReserva } from '../utils/apiFetch'
 
-const API_URL = 'https://painel.nexfood.app/api/login'
+const API_URL = `${API_PRINCIPAL}/api/login`
 
 // ============================================================================
 // UTILITIES
@@ -106,7 +107,7 @@ export default function Login() {
     setState({ loading: true, success: false, error: '' })
 
     try {
-      const response = await fetch(API_URL, {
+      const response = await fetchComReserva(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

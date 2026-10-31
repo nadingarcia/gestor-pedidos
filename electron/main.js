@@ -52,7 +52,7 @@ function createWindow() {
   const isDev = process.env.NODE_ENV === 'development'
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
+    mainWindow.loadURL('http://localhost:5175')
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
@@ -299,7 +299,7 @@ ipcMain.handle('open-kitchen-display', () => {
 
   const isDev = process.env.NODE_ENV === 'development'
   const url = isDev
-    ? 'http://localhost:5173/#/kitchen'
+    ? 'http://localhost:5175/#/kitchen'
     : `file://${path.join(__dirname, '../dist/index.html')}#/kitchen`
 
   kitchenWindow.loadURL(url)

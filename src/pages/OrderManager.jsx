@@ -12,7 +12,8 @@ import electronAPI from '@utils/electronBridge'
 import { useOrderClustering } from '@hooks/useOrderClustering'
 import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
-import { apiFetch } from '../utils/apiFetch'
+import { apiFetch, API_PRINCIPAL, usandoServidorReserva, aoMudarServidor } from '../utils/apiFetch'
+import { resolverStatusLoja } from '../utils/statusLoja'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 import packageInfo from '../../package.json'
 import notificationSoundUrl from '../assets/notification.mp3'
@@ -828,6 +829,11 @@ export default function OrderManager() {
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
   const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0)
+
+  // ── Status da loja para o cliente (aberta/fechada/pausada) e servidor em uso ─
+  const [lojaInfo, setLojaInfo] = useState(null) // { horarios, statusLoja }
+  const [statusLoja, setStatusLoja] = useState(null)
+  const [servidorReserva, setServidorReserva] = useState(usandoServidorReserva)
   const [updateState, setUpdateState] = useState({
     status: 'idle',
     progress: 0,
@@ -993,7 +999,7 @@ useEffect(() => {
 
     const fetchMotoboys = async () => {
       try {
-        const res = await apiFetch(`https://painel.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
+        const res = await apiFetch(`https://api.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
         if (!res.ok) throw new Error('Falha ao consultar motoboys.')
         const data = await res.json()
         const count = data.ativos?.filter((m) => m.status === 'disponivel').length || 0
@@ -1027,6 +1033,33 @@ useEffect(() => {
     }, 1000)
     return () => clearInterval(id)
   }, [lastUpdated])
+
+  // ── Status da loja: horários + modo manual vêm do perfil (a cada 1 min; o modo pode mudar
+  // pelo painel). A conta aberta/fechada roda a cada 30 s para virar no horário sem esperar a busca.
+  useEffect(() => {
+    let ativo = true
+    const buscar = async () => {
+      try {
+        const res = await apiFetch(`${API_PRINCIPAL}/api/restaurante/profile`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (ativo) setLojaInfo({ horarios: data.horariosFuncionamento || [], statusLoja: data.statusLoja || null })
+      } catch { /* mantém o último status conhecido */ }
+    }
+    buscar()
+    const id = setInterval(buscar, 60000)
+    return () => { ativo = false; clearInterval(id) }
+  }, [])
+
+  useEffect(() => {
+    if (!lojaInfo) return
+    const calcular = () => setStatusLoja(resolverStatusLoja(lojaInfo.horarios, lojaInfo.statusLoja))
+    calcular()
+    const id = setInterval(calcular, 30000)
+    return () => clearInterval(id)
+  }, [lojaInfo])
+
+  useEffect(() => aoMudarServidor(setServidorReserva), [])
 
   // ── Monitorar estado de tela cheia ────────────────────────────────────────
   useEffect(() => {
@@ -1346,7 +1379,7 @@ const handlePrintBagLabels = useCallback(
   // ── API: atualiza status de um pedido ─────────────────────────────────────
   const apiUpdateStatus = async (id, status) => {
     const res = await apiFetch(
-      `https://painel.nexfood.app/api/pedidos/${id}/status`,
+      `https://api.nexfood.app/api/pedidos/${id}/status`,
       {
         method: 'PATCH',
         // O backend passa a avisar o cliente (push ou WhatsApp via NexBot).
@@ -1386,7 +1419,7 @@ const handlePrintBagLabels = useCallback(
     const { aceitarAutomatico, impressoraAutomatica } = settingsRef.current
 
     try {
-      const res = await apiFetch('https://painel.nexfood.app/api/pedidos/dia', {
+      const res = await apiFetch('https://api.nexfood.app/api/pedidos/dia', {
         signal: abortControllerRef.current.signal,
       })
 
@@ -1557,7 +1590,7 @@ const handlePrintBagLabels = useCallback(
 
               try {
                 const currentRes = await apiFetch(
-                  `https://painel.nexfood.app/api/pedidos/${pedido._id}`
+                  `https://api.nexfood.app/api/pedidos/${pedido._id}`
                 )
                 if (!currentRes.ok) {
                   throw new Error(await getApiErrorMessage(currentRes, 'Não foi possível conferir o pedido.'))
@@ -1990,16 +2023,65 @@ const handlePrintBagLabels = useCallback(
                 <h1 className="text-xl font-bold text-gray-900 leading-tight">
                   Gestor de Pedidos
                 </h1>
-                <div className="flex items-center gap-2 text-sm" aria-live="polite">
+                {/* Duas informações diferentes, antes misturadas em "Loja Online" (que só media a internet):
+                    1) a loja como o cliente vê no app (aberta/fechada/pausada, pelo horário ou manual do painel);
+                    2) a conexão do gestor (internet, servidor reserva, última atualização). */}
+                <div className="flex items-center gap-2 text-sm">
+                {statusLoja && (
+                  <span
+                    className={`inline-flex items-center gap-1.5 font-semibold ${
+                      statusLoja.estado === 'aberta' ? 'text-emerald-700'
+                        : statusLoja.estado === 'pausada' ? 'text-orange-600'
+                        : 'text-gray-500'
+                    }`}
+                    title={statusLoja.manual
+                      ? 'Como os clientes veem a loja no app agora (definido manualmente no painel)'
+                      : 'Como os clientes veem a loja no app agora (pelo horário de funcionamento)'}
+                    aria-live="polite"
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        statusLoja.estado === 'aberta' ? 'bg-emerald-500'
+                          : statusLoja.estado === 'pausada' ? 'bg-orange-500'
+                          : 'bg-gray-400'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    {statusLoja.estado === 'aberta' && 'Loja aberta'}
+                    {statusLoja.estado === 'fechada' && 'Loja fechada'}
+                    {statusLoja.estado === 'pausada' && (statusLoja.pausaAte
+                      ? `Pausada até ${statusLoja.pausaAte.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+                      : 'Loja pausada')}
+                    {statusLoja.manual && statusLoja.estado !== 'pausada' && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">manual</span>
+                    )}
+                  </span>
+                )}
                 {isOnline ? (
                   <>
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" aria-hidden="true" />
-                    <span className="text-gray-500 font-medium">Loja Online</span>
-                    {lastUpdated && !isFromCache && (
-                      <span className="text-xs text-gray-400 hidden lg:inline">
-                        · Atualizado há {secondsSinceUpdate}s
+                    {/* Prioridade: pedidos parados (nem o principal nem a reserva responderam) > reserva em uso */}
+                    {lastUpdated && !isFromCache && secondsSinceUpdate >= 60 ? (
+                      <span
+                        className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-bold text-red-700"
+                        title="Os pedidos não estão sendo atualizados: o servidor não respondeu. Pedidos novos podem não aparecer."
+                        role="alert"
+                      >
+                        <i className="fas fa-triangle-exclamation text-[10px]" aria-hidden="true" />
+                        Sem atualizar há {Math.floor(secondsSinceUpdate / 60)} min
                       </span>
-                    )}
+                    ) : servidorReserva ? (
+                      <span
+                        className="text-xs font-semibold text-amber-700"
+                        title="O servidor principal não respondeu. O gestor está usando o servidor reserva e volta sozinho ao principal."
+                        role="status"
+                      >
+                        {statusLoja ? '· ' : ''}Servidor reserva
+                      </span>
+                    ) : lastUpdated && !isFromCache ? (
+                      <span className="text-xs text-gray-400 hidden lg:inline">
+                        {statusLoja ? '· ' : ''}Atualizado há {secondsSinceUpdate}s
+                      </span>
+                    ) : null}
                     {isFromCache && (
                       <span className="text-xs text-amber-600 hidden lg:inline">
                         · Sincronizando...
@@ -4403,11 +4485,28 @@ function NexBotBadge({ status }) {
 // ElectronBanner — aviso quando o gestor está rodando no navegador
 // ─────────────────────────────────────────────────────────────────────────────
 
+const BANNER_DESKTOP_KEY = 'nexfood_banner_desktop_ate'
+const BANNER_DESKTOP_PAUSA_DIAS = 7
+
+// Só oferece o .exe para quem está no Windows: no celular, Mac ou Linux o botão não serviria.
+const ehWindows = () => typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent || '')
+
+function bannerDesktopPausado() {
+  try {
+    return Number(localStorage.getItem(BANNER_DESKTOP_KEY) || 0) > Date.now()
+  } catch {
+    return false
+  }
+}
+
 function ElectronBanner() {
-  const [dismissed, setDismissed] = useState(false)
+  // "Agora não" pausa por 7 dias (antes voltava a cada recarga da página)
+  const [dismissed, setDismissed] = useState(bannerDesktopPausado)
   const [downloadUrl, setDownloadUrl] = useState('https://github.com/nadingarcia/gestor-pedidos/releases/latest')
+  const visivel = !electronAPI.isElectron() && !dismissed && ehWindows()
 
   useEffect(() => {
+    if (!visivel) return
     fetch('https://api.github.com/repos/nadingarcia/gestor-pedidos/releases/latest')
       .then(r => r.json())
       .then(data => {
@@ -4415,89 +4514,108 @@ function ElectronBanner() {
         if (exe) setDownloadUrl(exe.browser_download_url)
       })
       .catch(() => {}) // fallback já está no estado inicial
-  }, [])
+  }, [visivel])
 
-  if (electronAPI.isElectron() || dismissed) return null
+  const fechar = () => {
+    try {
+      localStorage.setItem(BANNER_DESKTOP_KEY, String(Date.now() + BANNER_DESKTOP_PAUSA_DIAS * 24 * 60 * 60 * 1000))
+    } catch { /* sem storage: fecha só nesta sessão */ }
+    setDismissed(true)
+  }
 
+  if (!visivel) return null
+
+  // Cartão discreto no padrão dos outros cartões do gestor (borda cinza, sombra, roxo só no ícone e no
+  // botão). Antes: borda roxa grossa, faixa roxa e ícones vermelhos de "indisponível" — parecia erro.
   return (
-    <div
-      className="fixed bottom-5 left-5 z-[200] max-w-sm w-full bg-white border-2 border-[#7f22fe] rounded-2xl shadow-2xl overflow-hidden"
-      role="alert"
-      aria-live="polite"
+    <aside
+      className="fixed bottom-5 left-5 z-[200] w-[min(360px,calc(100vw-2.5rem))] rounded-2xl border border-gray-200 bg-white p-4 shadow-xl"
+      aria-labelledby="banner-desktop-titulo"
     >
-      <div className="bg-[#7f22fe] px-4 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-white font-bold text-sm">
-          <i className="fas fa-bolt" aria-hidden="true"></i>
-          Gestor de Pedidos — Versão Desktop
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#7f22fe]/10 text-[#7f22fe]" aria-hidden="true">
+          <i className="fas fa-desktop"></i>
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 id="banner-desktop-titulo" className="text-sm font-bold text-gray-900">
+            Use o Gestor instalado no computador
+          </h2>
+          <p className="mt-0.5 text-xs text-gray-500">
+            No navegador, algumas funções ficam de fora.
+          </p>
         </div>
         <button
-          onClick={() => setDismissed(true)}
-          className="text-white/70 hover:text-white transition-colors"
-          aria-label="Fechar aviso"
+          onClick={fechar}
+          className="-mr-1 -mt-1 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+          aria-label="Fechar aviso por 7 dias"
           type="button"
         >
           <i className="fas fa-times text-sm" aria-hidden="true"></i>
         </button>
       </div>
 
-      <div className="p-4 space-y-3">
-        <p className="text-sm text-gray-700 font-medium leading-relaxed">
-          Você está usando o Gestor no navegador.{' '}
-          <strong className="text-gray-900">Algumas funcionalidades estão indisponíveis:</strong>
-        </p>
+      <ul className="mt-3 space-y-1.5 text-[13px] text-gray-700">
+        {[
+          'Imprime sozinho na térmica',
+          'Tela da cozinha em outra janela',
+          'Avisos do Windows mesmo minimizado',
+          'O PC não entra em descanso no expediente',
+        ].map((label) => (
+          <li key={label} className="flex items-center gap-2">
+            <i className="fas fa-check w-4 text-center text-xs text-[#7f22fe]" aria-hidden="true"></i>
+            <span>{label}</span>
+          </li>
+        ))}
+      </ul>
 
-        <ul className="space-y-1.5 text-sm text-gray-600">
-          {[
-            ['fa-print',     'Impressão automática na térmica'],
-            ['fa-tv',        'Display da cozinha (janela separada)'],
-            ['fa-bell',      'Notificações nativas do sistema'],
-            ['fa-plug',      'Bloqueio de suspensão do PC'],
-            ['fa-sync-alt',  'Sincronização em tempo real com cozinha'],
-          ].map(([icon, label]) => (
-            <li key={label} className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-                <i className={`fas ${icon} text-red-500 text-[10px]`} aria-hidden="true"></i>
-              </span>
-              <span>{label}</span>
-            </li>
-          ))}
-        </ul>
-
-        <div className="pt-1 border-t border-gray-100">
-          <p className="text-xs text-gray-500 mb-2">
-            Baixe o app desktop para ter a experiência completa:
-          </p>
-          <a
-            href={downloadUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 w-full py-2.5 bg-[#7f22fe] hover:bg-[#6b1de0] text-white rounded-lg font-bold text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
-          >
-            <i className="fas fa-download" aria-hidden="true"></i>
-            Baixar Gestor de Pedidos (.exe)
-          </a>
-
-          {/* Aviso SmartScreen */}
-          <p className="text-[11px] text-gray-400 text-center mt-2 leading-relaxed">
-            <i className="fas fa-shield-alt mr-1"></i>
-            Se o Windows exibir um aviso de segurança, clique em{' '}
-            <strong className="text-gray-500">"Mais informações"</strong> e depois em{' '}
-            <strong className="text-gray-500">"Executar mesmo assim"</strong>.
-          </p>
-        </div>
+      <div className="mt-4 flex items-center gap-2">
+        <a
+          href={downloadUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#7f22fe] py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#6b1de0] focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
+        >
+          <i className="fas fa-download" aria-hidden="true"></i>
+          Baixar para Windows
+        </a>
+        <button
+          type="button"
+          onClick={fechar}
+          className="rounded-lg px-3 py-2.5 text-sm font-semibold text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-400/40"
+        >
+          Agora não
+        </button>
       </div>
-    </div>
+
+      <p className="mt-2.5 text-[11px] leading-snug text-gray-400">
+        Se o Windows mostrar um aviso, clique em <strong className="font-semibold text-gray-500">Mais informações</strong> e
+        depois em <strong className="font-semibold text-gray-500">Executar mesmo assim</strong>.
+      </p>
+    </aside>
   )
 }
 
 function AccordionSection({ id, icon, title, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen)
+  const sectionRef = useRef(null)
+  const abriuPeloUsuario = useRef(false)
+
+  // Ao abrir uma seção no fim da gaveta (Conta, Sobre, Sistema…), o conteúdo nascia abaixo da dobra
+  // e era preciso rolar à mão. Rola só o necessário para a seção inteira aparecer ('nearest'); se ela
+  // for maior que a gaveta, o cabeçalho fica no topo.
+  useEffect(() => {
+    if (!open || !abriuPeloUsuario.current) return
+    const el = sectionRef.current
+    if (!el) return
+    const reduzir = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ block: 'nearest', behavior: reduzir ? 'auto' : 'smooth' })
+  }, [open])
 
   return (
-    <div className="rounded-xl border border-gray-200 overflow-hidden">
+    <div ref={sectionRef} className="rounded-xl border border-gray-200 overflow-hidden scroll-my-4">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => { abriuPeloUsuario.current = true; setOpen(!open) }}
         className="w-full flex items-center justify-between px-4 py-3.5 bg-gray-50 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#7f22fe]/30"
         aria-expanded={open}
         aria-controls={id}
@@ -4805,7 +4923,7 @@ function MotoboySelectorModal({ pedido, onClose, onAtribuido, onSkip }) {
   const slug = localStorage.getItem('restauranteSlug') || ''
 
   useEffect(() => {
-    apiFetch(`https://painel.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
+    apiFetch(`https://api.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
       .then(r => r.json())
       .then(data => {
         setMotoboys(data.ativos?.filter(m => m.status === 'disponivel') || [])
@@ -4817,7 +4935,7 @@ function MotoboySelectorModal({ pedido, onClose, onAtribuido, onSkip }) {
   const handleAtribuir = async (presenca) => {
   setAtribuindo(presenca.presencaId)
   try {
-    const res = await apiFetch('https://painel.nexfood.app/api/motoboy/atribuir-entrega', {
+    const res = await apiFetch('https://api.nexfood.app/api/motoboy/atribuir-entrega', {
       method: 'POST',
       body: JSON.stringify({
         motoboyId:       presenca.motoboy._id,
@@ -4897,7 +5015,7 @@ function MotoboySelectorModal({ pedido, onClose, onAtribuido, onSkip }) {
               <button
                 onClick={() => {
                   setLoading(true)
-                  apiFetch(`https://painel.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
+                  apiFetch(`https://api.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
                     .then(r => r.json())
                     .then(d => { setMotoboys(d.ativos?.filter(m => m.status === 'disponivel') || []); setLoading(false) })
                     .catch(() => setLoading(false))

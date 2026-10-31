@@ -22,7 +22,7 @@ export default defineConfig({
   
   // Configurações do servidor de desenvolvimento
   server: {
-    port: 5173,
+    port: 5175,
     host: true,
     strictPort: true,
     open: false, // Não abrir navegador automaticamente (Electron vai abrir)
