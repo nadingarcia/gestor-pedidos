@@ -1,3 +1,4 @@
+import './utils/erroRemoto'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 // 1. Troque BrowserRouter por HashRouter aqui

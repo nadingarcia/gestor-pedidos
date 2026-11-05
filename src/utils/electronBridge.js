@@ -58,6 +58,12 @@ export const electronAPI = {
     window.electronAPI.offUpdaterEvents()
   },
   installUpdate: () => safeInvoke(window.electronAPI.installUpdate),
+  // Versões antigas do preload não têm estas duas: sem elas, segue sem nome e sem trazer a janela
+  getHostname: async () => (isElectron() && window.electronAPI.getHostname ? safeInvoke(window.electronAPI.getHostname) : null),
+  chamarAtencao: () => (isElectron() && window.electronAPI.chamarAtencao ? safeInvoke(window.electronAPI.chamarAtencao) : null),
+  atualizarAgora: async () => (isElectron() && window.electronAPI.atualizarAgora
+    ? safeInvoke(window.electronAPI.atualizarAgora)
+    : { estado: 'erro', erro: 'Esta versão não atualiza pelo celular.' }),
   isElectron,
 };
 

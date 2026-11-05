@@ -14,6 +14,8 @@ import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch, API_PRINCIPAL, usandoServidorReserva, aoMudarServidor } from '../utils/apiFetch'
 import { resolverStatusLoja } from '../utils/statusLoja'
+import { conectarCanal } from '../utils/tempoReal'
+import { getNomeComputador, getNomeDoSistema, salvarNomeComputador } from '../utils/gestorIdentidade'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 import packageInfo from '../../package.json'
 import notificationSoundUrl from '../assets/notification.mp3'
@@ -55,6 +57,8 @@ const CACHE_KEY = 'nexfood_pedidos_cache'
 const CACHE_MAX_AGE_MS = 8 * 60 * 60 * 1000 // 8 horas
 const PRINT_STATUS_KEY = 'nexfood_order_print_status'
 const ORDER_REFRESH_SECONDS = 10
+// Com o canal de avisos ligado, pedido novo chega em segundos e a consulta vira só a reserva
+const ORDER_REFRESH_COM_CANAL_MS = 30 * 1000
 
 const readPedidosCache = () => {
   try {
@@ -817,6 +821,8 @@ export default function OrderManager() {
   const [motoboyModalTarget, setMotoboyModalTarget] = useState(null)
   const [showSlugModal, setShowSlugModal] = useState(false)
   const [printFailure, setPrintFailure] = useState(null)
+  const printFailureRef = useRef(null)
+  useEffect(() => { printFailureRef.current = printFailure }, [printFailure])
   const [printStatuses, setPrintStatuses] = useState(readPrintStatuses)
   const [printingOrderIds, setPrintingOrderIds] = useState(() => new Set())
   const printingOrderIdsRef = useRef(new Set())
@@ -833,6 +839,16 @@ export default function OrderManager() {
   // ── Status da loja para o cliente (aberta/fechada/pausada) e servidor em uso ─
   const [lojaInfo, setLojaInfo] = useState(null) // { horarios, statusLoja }
   const [statusLoja, setStatusLoja] = useState(null)
+  const buscarLojaRef = useRef(null)
+  const canalLigadoRef = useRef(false)
+  const [canalLigado, setCanalLigado] = useState(false)
+  // Com dois computadores abertos, só o principal aceita e imprime sozinho (o servidor decide)
+  const papelRef = useRef(null)
+  const [papel, setPapel] = useState(null)
+  const [computadoresOnline, setComputadoresOnline] = useState(1)
+  const [chamado, setChamado] = useState(null) // { id, numero } quando o dono chama pelo celular
+  const [nomeComputador, setNomeComputador] = useState(getNomeComputador)
+  const ultimaBuscaPedidosRef = useRef(0)
   const [servidorReserva, setServidorReserva] = useState(usandoServidorReserva)
   const [updateState, setUpdateState] = useState({
     status: 'idle',
@@ -1046,9 +1062,10 @@ useEffect(() => {
         if (ativo) setLojaInfo({ horarios: data.horariosFuncionamento || [], statusLoja: data.statusLoja || null })
       } catch { /* mantém o último status conhecido */ }
     }
+    buscarLojaRef.current = buscar
     buscar()
     const id = setInterval(buscar, 60000)
-    return () => { ativo = false; clearInterval(id) }
+    return () => { ativo = false; buscarLojaRef.current = null; clearInterval(id) }
   }, [])
 
   useEffect(() => {
@@ -1262,8 +1279,13 @@ useEffect(() => {
 
       // No Electron, permite pintar o feedback antes de chamar o spooler.
       // No navegador, window.open precisa continuar ligado diretamente ao clique.
+      // Com a janela minimizada ou coberta o Chromium pode não desenhar quadro nenhum, e esperar só
+      // pelo requestAnimationFrame travava a impressão em segundo plano: o tempo limite garante a saída.
       if (usesElectronPrinter) {
-        await new Promise((resolve) => requestAnimationFrame(resolve))
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => resolve())
+          setTimeout(resolve, 100)
+        })
       }
 
       try {
@@ -1419,12 +1441,26 @@ const handlePrintBagLabels = useCallback(
     const { aceitarAutomatico, impressoraAutomatica } = settingsRef.current
 
     try {
+      ultimaBuscaPedidosRef.current = Date.now()
       const res = await apiFetch('https://api.nexfood.app/api/pedidos/dia', {
         signal: abortControllerRef.current.signal,
+        headers: {
+          'X-Gestor-Versao': packageInfo.version,
+          'X-Gestor-Impressora': !electronAPI?.isElectron?.() || !settingsRef.current.impressoraAutomatica
+            ? 'sem'
+            : printFailureRef.current ? 'falha' : 'ok',
+        },
       })
 
       // Se não for OK (ex: 401 sem renovação), para aqui sem logar erro
       if (!res.ok) return
+
+      // Vem nesta mesma resposta: o segundo computador já abre sabendo que só acompanha
+      const papelServidor = res.headers.get('X-Gestor-Papel')
+      if (papelServidor) {
+        papelRef.current = papelServidor
+        setPapel(papelServidor)
+      }
 
       const data = await res.json()
 
@@ -1470,7 +1506,7 @@ const handlePrintBagLabels = useCallback(
       writePedidosCache({ pedidosConfirmados, aguardandoPagamento, pagamentosRecusados })
       setIsFromCache(false)
 
-      if (aceitarAutomatico) {
+      if (aceitarAutomatico && papelRef.current !== 'acompanhando') {
         const novos = pedidosConfirmados.filter(
           (p) =>
             p.status === 'Recebido' &&
@@ -1537,12 +1573,209 @@ const handlePrintBagLabels = useCallback(
   // configuracao operacional desnecessaria.
   useEffect(() => {
     fetchPedidos()
-    const interval = setInterval(fetchPedidos, ORDER_REFRESH_SECONDS * 1000)
+    const interval = setInterval(() => {
+      if (canalLigadoRef.current && Date.now() - ultimaBuscaPedidosRef.current < ORDER_REFRESH_COM_CANAL_MS) return
+      fetchPedidos()
+    }, ORDER_REFRESH_SECONDS * 1000)
     return () => {
       clearInterval(interval)
       abortControllerRef.current?.abort()
     }
   }, [fetchPedidos])
+
+  // ── Ordens vindas do celular ──────────────────────────────────────────────
+  // Assumir é atômico no servidor: com dois gestores abertos, só um imprime.
+  const handlePrintRef = useRef(handlePrint)
+  useEffect(() => { handlePrintRef.current = handlePrint }, [handlePrint])
+  const cumprindoComandosRef = useRef(false)
+
+  const cumprirComandos = useCallback(async () => {
+    if (cumprindoComandosRef.current) return
+    cumprindoComandosRef.current = true
+    try {
+      const res = await apiFetch(`${API_PRINCIPAL}/api/gestor/comandos/pendentes`)
+      if (!res.ok) return
+      const comandos = await res.json()
+      for (const comando of comandos) {
+        const assumido = await apiFetch(`${API_PRINCIPAL}/api/gestor/comandos/${comando._id}/assumir`, { method: 'POST' })
+        if (!assumido.ok) continue
+        const concluir = (ok, erro = null, resultado = null) => apiFetch(`${API_PRINCIPAL}/api/gestor/comandos/${comando._id}/concluir`, {
+          method: 'POST',
+          body: JSON.stringify({ ok, erro, resultado }),
+        })
+
+        if (comando.tipo === 'desconectar') {
+          await concluir(true)
+          ;['nexfood_token', 'nexfood_user', 'nexfood_refresh_token'].forEach((key) => localStorage.removeItem(key))
+          ;['nexfood_token', 'nexfood_user', 'nexfood_refresh_token'].forEach((key) => sessionStorage.removeItem(key))
+          navigate('/login')
+          return
+        }
+
+        if (comando.tipo === 'chamar') {
+          // Fica "assumido" até alguém responder: é isso que o dono vê como resposta no celular
+          let numero = null
+          if (comando.pedido) {
+            const resPedido = await apiFetch(`${API_PRINCIPAL}/api/pedidos/${comando.pedido}`).catch(() => null)
+            if (resPedido?.ok) numero = (await resPedido.json()).numeroPedido || null
+          }
+          setChamado({ id: comando._id, numero, recado: comando.recado || null })
+          electronAPI.chamarAtencao?.()
+          continue
+        }
+
+        if (comando.tipo === 'atualizar') {
+          const resposta = await electronAPI.atualizarAgora()
+          const versao = resposta?.versao ? ` ${resposta.versao}` : ''
+          if (resposta?.estado === 'instalando') await concluir(true, null, `instalando${versao}`)
+          else if (resposta?.estado === 'baixando') await concluir(true, null, `baixando${versao}`)
+          else if (resposta?.estado === 'atualizado') await concluir(true, null, `atualizado${versao}`)
+          else if (resposta?.estado === 'dev') await concluir(false, 'Gestor em modo de desenvolvimento: não atualiza.')
+          else await concluir(false, resposta?.erro || 'Não foi possível procurar atualização.')
+          continue
+        }
+
+        if (comando.tipo === 'testar-impressora') {
+          if (!electronAPI?.isElectron?.() || !settingsRef.current.impressoraAutomatica) {
+            await concluir(false, 'O Gestor está sem impressora configurada.')
+          } else {
+            const ok = await handlePrintRef.current(PEDIDO_TESTE_IMPRESSAO)
+            await concluir(ok, ok ? null : 'A impressora não respondeu.')
+          }
+          continue
+        }
+
+        let ok = false
+        let erro = null
+        try {
+          if (!electronAPI?.isElectron?.() || !settingsRef.current.impressoraAutomatica) {
+            erro = 'O Gestor está sem impressora configurada.'
+          } else {
+            const resPedido = await apiFetch(`${API_PRINCIPAL}/api/pedidos/${comando.pedido}`)
+            if (!resPedido.ok) throw new Error('Pedido não encontrado.')
+            ok = await handlePrintRef.current(await resPedido.json())
+            if (!ok) erro = 'A impressora não respondeu.'
+          }
+        } catch (err) {
+          erro = err?.message || 'Falha ao imprimir.'
+        }
+        await concluir(ok, erro)
+      }
+    } catch (err) {
+      console.error('Erro ao cumprir ordens do celular:', err)
+    } finally {
+      cumprindoComandosRef.current = false
+    }
+  }, [navigate])
+
+  // Alarme do chamado: toque próprio (dois tons alternados, tipo sirene curta), diferente do som de pedido
+  // novo para não confundir. Toca até alguém responder, mesmo com o som de pedido desligado.
+  // Gerado pelo Web Audio, sem arquivo; se o áudio estiver bloqueado, usa o som de pedido como reserva.
+  useEffect(() => {
+    if (!chamado) return
+    let contexto = null
+    try {
+      contexto = new (window.AudioContext || window.webkitAudioContext)()
+    } catch { /* sem Web Audio */ }
+
+    const tocar = () => {
+      if (!contexto || contexto.state !== 'running') {
+        contexto?.resume().catch(() => {})
+        if (contexto?.state !== 'running') {
+          notificationAudio.currentTime = 0
+          notificationAudio.play().catch(() => {})
+          return
+        }
+      }
+      const inicio = contexto.currentTime + 0.05
+      // tu-ti tu-ti: 4 notas de 0,2 s
+      ;[988, 740, 988, 740].forEach((frequencia, i) => {
+        const momento = inicio + i * 0.24
+        const oscilador = contexto.createOscillator()
+        const volume = contexto.createGain()
+        oscilador.type = 'square'
+        oscilador.frequency.value = frequencia
+        volume.gain.setValueAtTime(0.0001, momento)
+        volume.gain.exponentialRampToValueAtTime(0.18, momento + 0.02)
+        volume.gain.exponentialRampToValueAtTime(0.0001, momento + 0.2)
+        oscilador.connect(volume).connect(contexto.destination)
+        oscilador.start(momento)
+        oscilador.stop(momento + 0.22)
+      })
+    }
+
+    contexto?.resume().catch(() => {})
+    tocar()
+    const id = setInterval(tocar, 2500)
+    return () => {
+      clearInterval(id)
+      contexto?.close().catch(() => {})
+    }
+  }, [chamado])
+
+  const responderChamado = useCallback(async (resultado = 'visto') => {
+    const atual = chamado
+    setChamado(null)
+    if (!atual) return
+    await apiFetch(`${API_PRINCIPAL}/api/gestor/comandos/${atual.id}/concluir`, {
+      method: 'POST',
+      body: JSON.stringify({ ok: true, resultado }),
+    }).catch(() => {})
+  }, [chamado])
+
+  const buscarPapel = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_PRINCIPAL}/api/gestor/status`)
+      if (!res.ok) return
+      const dados = await res.json()
+      if (dados.papel) {
+        papelRef.current = dados.papel
+        setPapel(dados.papel)
+      }
+      setComputadoresOnline((dados.instancias || []).filter((i) => i.online).length || 1)
+    } catch { /* fica com o último papel conhecido */ }
+  }, [])
+
+  // ── Canal de avisos ───────────────────────────────────────────────────────
+  // Espera um instante para uma rajada de gravações virar uma consulta só.
+  const fetchPedidosRef = useRef(fetchPedidos)
+  useEffect(() => { fetchPedidosRef.current = fetchPedidos }, [fetchPedidos])
+
+  useEffect(() => {
+    let timerPedidos = null
+    const parar = conectarCanal({
+      aoMudarConexao: (ligado) => {
+        canalLigadoRef.current = ligado
+        setCanalLigado(ligado)
+        if (!ligado) return
+        fetchPedidosRef.current()
+        cumprirComandos()
+        buscarPapel()
+      },
+      aoAviso: (tipo) => {
+        if (tipo === 'pedido') {
+          clearTimeout(timerPedidos)
+          timerPedidos = setTimeout(() => fetchPedidosRef.current(), 300)
+        } else if (tipo === 'loja') {
+          buscarLojaRef.current?.()
+        } else if (tipo === 'comando') {
+          cumprirComandos()
+        } else if (tipo === 'gestor') {
+          buscarPapel()
+        }
+      },
+    })
+    // Sem o canal, a ordem do celular ainda chega, só que em até 30 s
+    const reserva = setInterval(() => {
+      if (!canalLigadoRef.current) cumprirComandos()
+    }, ORDER_REFRESH_COM_CANAL_MS)
+    return () => {
+      parar()
+      clearTimeout(timerPedidos)
+      clearInterval(reserva)
+      canalLigadoRef.current = false
+    }
+  }, [cumprirComandos, buscarPapel])
 
   // ── advanceStatus com atualização otimista ────────────────────────────────
   //
@@ -2076,6 +2309,28 @@ const handlePrintBagLabels = useCallback(
                         role="status"
                       >
                         {statusLoja ? '· ' : ''}Servidor reserva
+                      </span>
+                    ) : canalLigado && !isFromCache ? (
+                      <span
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700"
+                        title="Conectado ao servidor: pedidos novos e mudanças chegam em segundos."
+                        role="status"
+                      >
+                        {statusLoja ? '· ' : ''}
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+                        Ao vivo
+                        {computadoresOnline > 1 && papel && (
+                          <span
+                            className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                              papel === 'principal' ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-600'
+                            }`}
+                            title={papel === 'principal'
+                              ? 'Há outro Gestor aberto. Este é o principal: aceita e imprime sozinho.'
+                              : 'Há outro Gestor aberto e ele é o principal. Este só acompanha: não aceita nem imprime sozinho.'}
+                          >
+                            {papel === 'principal' ? 'Principal' : 'Só acompanhando'}
+                          </span>
+                        )}
                       </span>
                     ) : lastUpdated && !isFromCache ? (
                       <span className="text-xs text-gray-400 hidden lg:inline">
@@ -2640,6 +2895,21 @@ const handlePrintBagLabels = useCallback(
                 />
               </div>
 
+              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
+                <label htmlFor="nome-computador" className="text-sm text-gray-900 font-medium">Nome deste computador</label>
+                <p className="text-xs text-gray-500 mb-2">Aparece no celular, para saber qual Gestor está ligado</p>
+                <input
+                  id="nome-computador"
+                  type="text"
+                  maxLength={40}
+                  value={nomeComputador}
+                  placeholder={getNomeDoSistema() || 'Ex.: Caixa'}
+                  onChange={(e) => setNomeComputador(e.target.value)}
+                  onBlur={() => { salvarNomeComputador(nomeComputador); fetchPedidosRef.current() }}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                />
+              </div>
+
               <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
                 <div>
                   <p className="text-sm text-gray-900 font-medium">Aviso do sistema</p>
@@ -3083,6 +3353,46 @@ const handlePrintBagLabels = useCallback(
             }}
             onClose={() => setShowSlugModal(false)}
           />
+        )}
+
+        {chamado && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-violet-900/80 p-6"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="chamado-titulo"
+          >
+            <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-2xl">
+              <span className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-100 text-violet-700">
+                <i className="fas fa-bell fa-shake text-3xl" aria-hidden="true" />
+              </span>
+              <h2 id="chamado-titulo" className="text-2xl font-bold text-gray-900">O dono está chamando</h2>
+              {chamado.recado && (
+                <p className="mt-3 rounded-xl bg-violet-50 px-4 py-3 text-xl font-bold text-violet-900">{chamado.recado}</p>
+              )}
+              <p className="mt-2 text-base text-gray-600">
+                {chamado.numero
+                  ? `Pedido #${chamado.numero}.`
+                  : chamado.recado ? 'Responda para o dono saber que você viu.' : 'Confira os pedidos, por favor.'}
+              </p>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => responderChamado('visto')}
+                className="mt-6 w-full rounded-xl bg-violet-600 px-6 py-4 text-lg font-bold text-white hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300"
+              >
+                Vi, já estou vendo
+              </button>
+              <button
+                type="button"
+                onClick={() => responderChamado('ocupado')}
+                className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-6 py-3 text-base font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-4 focus:ring-gray-200"
+              >
+                Agora não posso
+              </button>
+              <p className="mt-3 text-xs text-gray-400">O dono recebe a confirmação no celular.</p>
+            </div>
+          </div>
         )}
 
         {showLogoutConfirm && (

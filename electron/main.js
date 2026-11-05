@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, powerSaveBlocker, shell } from 'electron'
 import path from 'path'
+import os from 'os'
 import { fileURLToPath } from 'url'
 import AutoLaunch from 'auto-launch'
 
@@ -74,18 +75,26 @@ function createWindow() {
     }
   })
 
- mainWindow.once('ready-to-show', () => {
-  mainWindow.show()
-  
-  if (!isDev) {
-    try {
-      log.info('App pronto. Verificando atualizações...')
-      autoUpdater.checkForUpdatesAndNotify()
-    } catch (err) {
-      log.error('Erro ao verificar atualizações:', err)
+  // No Linux com Wayland (e aceleração desligada) o 'ready-to-show' pode nunca chegar: a página carrega,
+  // mas a janela ficava escondida para sempre, e a busca de atualização junto. Mostra no primeiro sinal.
+  let janelaMostrada = false
+  const mostrarJanela = () => {
+    if (janelaMostrada || !mainWindow || mainWindow.isDestroyed()) return
+    janelaMostrada = true
+    mainWindow.show()
+
+    if (!isDev) {
+      try {
+        log.info('App pronto. Verificando atualizações...')
+        autoUpdater.checkForUpdatesAndNotify()
+      } catch (err) {
+        log.error('Erro ao verificar atualizações:', err)
+      }
     }
   }
-})
+  mainWindow.once('ready-to-show', mostrarJanela)
+  mainWindow.webContents.once('did-finish-load', () => setTimeout(mostrarJanela, 300))
+  setTimeout(mostrarJanela, 5000)
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -141,9 +150,20 @@ autoUpdater.on('download-progress', (progressObj) => {
   })
 })
 
-autoUpdater.on('update-downloaded', () => {
+// Atualizar pelo celular: o dono pede, o gestor baixa e reinicia sozinho (sem a pergunta "Deseja reiniciar?")
+let atualizacaoBaixada = null
+let instalarAoBaixar = false
+const reiniciarParaAtualizar = () => setTimeout(() => autoUpdater.quitAndInstall(false, true), 3000)
+
+autoUpdater.on('update-downloaded', (info) => {
   log.info('Atualização baixada.')
+  atualizacaoBaixada = info?.version || 'nova'
   if (mainWindow) mainWindow.webContents.send('update_downloaded')
+  if (instalarAoBaixar) {
+    log.info('Atualização pedida pelo celular: reiniciando para instalar.')
+    reiniciarParaAtualizar()
+    return
+  }
   
   dialog.showMessageBox(mainWindow, {
     type: 'info',
@@ -155,6 +175,25 @@ autoUpdater.on('update-downloaded', () => {
       autoUpdater.quitAndInstall(false, true)
     }
   })
+})
+
+// Responde na hora; quando já está baixada, reinicia 3 s depois (dá tempo de avisar o celular)
+ipcMain.handle('atualizar-agora', async () => {
+  if (!app.isPackaged) return { estado: 'dev', versao: app.getVersion() }
+  try {
+    if (atualizacaoBaixada) {
+      reiniciarParaAtualizar()
+      return { estado: 'instalando', versao: atualizacaoBaixada }
+    }
+    const resultado = await autoUpdater.checkForUpdates()
+    const nova = resultado?.updateInfo?.version
+    if (!resultado?.isUpdateAvailable || !nova) return { estado: 'atualizado', versao: app.getVersion() }
+    instalarAoBaixar = true // autoDownload já começou a baixar; instala quando terminar
+    return { estado: 'baixando', versao: nova }
+  } catch (err) {
+    log.error('Erro ao atualizar pelo celular:', err)
+    return { estado: 'erro', erro: err?.message || 'Falha ao procurar atualização' }
+  }
 })
 
 ipcMain.handle('install-update', () => {
@@ -303,10 +342,17 @@ ipcMain.handle('open-kitchen-display', () => {
     : `file://${path.join(__dirname, '../dist/index.html')}#/kitchen`
 
   kitchenWindow.loadURL(url)
-  kitchenWindow.once('ready-to-show', () => {
+  // Mesmo cuidado da janela principal: sem 'ready-to-show', mostra quando a página termina de carregar
+  let cozinhaMostrada = false
+  const mostrarCozinha = () => {
+    if (cozinhaMostrada || !kitchenWindow || kitchenWindow.isDestroyed()) return
+    cozinhaMostrada = true
     kitchenWindow.show()
     kitchenWindow.setFullScreen(true)
-  })
+  }
+  kitchenWindow.once('ready-to-show', mostrarCozinha)
+  kitchenWindow.webContents.once('did-finish-load', () => setTimeout(mostrarCozinha, 300))
+  setTimeout(mostrarCozinha, 5000)
   kitchenWindow.webContents.on('did-finish-load', () => {
   mainWindow?.webContents.send('kitchen-ready')
 })
@@ -323,6 +369,22 @@ ipcMain.on('push-kitchen-orders', (_, orders) => {
 })
 
 // 🔹 Notificações
+ipcMain.handle('get-hostname', () => os.hostname())
+
+// O dono chamou pelo celular: tira a janela de minimizada, traz para frente por alguns segundos e pisca na barra
+ipcMain.handle('chamar-atencao', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { success: false }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.setAlwaysOnTop(true)
+  mainWindow.focus()
+  mainWindow.flashFrame(true)
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setAlwaysOnTop(false)
+  }, 5000)
+  return { success: true }
+})
+
 ipcMain.handle('send-notification', async (event, { title, body }) => {
   try {
     if (Notification.isSupported()) {

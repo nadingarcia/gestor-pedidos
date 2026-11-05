@@ -1,3 +1,4 @@
+import { cabecalhosDoGestor } from './gestorIdentidade'
 const STORAGE_TOKEN         = 'nexfood_token';
 const STORAGE_REFRESH_TOKEN = 'nexfood_refresh_token';
 
@@ -116,6 +117,7 @@ export async function apiFetch(url, options = {}) {
 
     const headers = {
         'Content-Type': 'application/json',
+        ...cabecalhosDoGestor(),
         ...options.headers,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };

@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('update_downloaded');
   },
   installUpdate: () => ipcRenderer.invoke('install-update'),
+
+  // Canal com o celular: nome do computador e trazer a janela para frente quando o dono chama
+  getHostname: () => ipcRenderer.invoke('get-hostname'),
+  chamarAtencao: () => ipcRenderer.invoke('chamar-atencao'),
+  atualizarAgora: () => ipcRenderer.invoke('atualizar-agora'),
   
 
   // Pequeno utilitário
