@@ -32,6 +32,11 @@ export function conectarCanal({ aoAviso, aoMudarConexao }) {
     const leitor = corpo.getReader()
     const decodificador = new TextDecoder()
     let resto = ''
+    // Encerrada por parar() enquanto conectava: não avisa "ligado" (uma conexão nova pode estar no lugar)
+    if (parado) {
+      leitor.cancel().catch(() => {})
+      return
+    }
     espera = ESPERA_MIN_MS
     aoMudarConexao(true)
     vigiar()
@@ -73,9 +78,11 @@ export function conectarCanal({ aoAviso, aoMudarConexao }) {
     } catch { /* queda de rede: tenta de novo */ }
 
     clearTimeout(timerSilencio)
+    // Encerrada por parar(): não avisa "desligado" (uma conexão nova pode já estar ligada)
+    if (parado) return
     aoMudarConexao(false)
     espera = Math.min(espera * 2, ESPERA_MAX_MS)
-    if (!parado) timerReabrir = setTimeout(abrir, proxima)
+    timerReabrir = setTimeout(abrir, proxima)
   }
 
   abrir()

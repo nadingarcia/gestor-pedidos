@@ -20,14 +20,7 @@ import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 import packageInfo from '../../package.json'
 import notificationSoundUrl from '../assets/notification.mp3'
 import { linhaComplemento } from '../utils/complementos'
-import {
-  TIPO_PEDIDO_BALCAO,
-  TIPO_PEDIDO_DELIVERY,
-  TIPO_PEDIDO_TODOS,
-  getTipoPedidoLabel,
-  isDelivery,
-  normalizeTipoPedido,
-} from '@utils/orderType'
+import { getTipoPedidoLabel, isDelivery } from '@utils/orderType'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLETONS DE MÓDULO
@@ -59,6 +52,8 @@ const PRINT_STATUS_KEY = 'nexfood_order_print_status'
 const ORDER_REFRESH_SECONDS = 10
 // Com o canal de avisos ligado, pedido novo chega em segundos e a consulta vira só a reserva
 const ORDER_REFRESH_COM_CANAL_MS = 30 * 1000
+const PERFIL_SEM_CANAL_MS = 60 * 1000
+const PERFIL_SEGURANCA_COM_CANAL_MS = 30 * 60 * 1000
 
 const readPedidosCache = () => {
   try {
@@ -855,18 +850,8 @@ export default function OrderManager() {
     progress: 0,
   })
 
-  // ── Busca e filtros ───────────────────────────────────────────────────────
+  // ── Busca ─────────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
-  const [filters, setFilters] = useState({
-    tipo: TIPO_PEDIDO_TODOS,
-    pagamento: 'todos',
-    valorMin: '',
-    valorMax: '',
-    apenasAgrupados: false,
-    apenasUrgentes: false,
-    apenasRecorrentes: false,
-  })
-  const [showFilters, setShowFilters] = useState(false)
 
   // ── Sistema de toasts ─────────────────────────────────────────────────────
   const [toasts, setToasts] = useState([])
@@ -909,9 +894,7 @@ export default function OrderManager() {
   // ── Ref do AbortController para cancelar fetches obsoletos ───────────────
   const abortControllerRef = useRef(null)
 
-  // ── Refs das sidebars de filtros/configurações — fecham com ESC ou clique fora ─
-  const filtersPanelRef = useRef(null)
-  const filtersButtonRef = useRef(null)
+  // ── Refs da sidebar de configurações — fecha com ESC ou clique fora ───────
   const settingsPanelRef = useRef(null)
   const settingsButtonRef = useRef(null)
 
@@ -1050,11 +1033,14 @@ useEffect(() => {
     return () => clearInterval(id)
   }, [lastUpdated])
 
-  // ── Status da loja: horários + modo manual vêm do perfil (a cada 1 min; o modo pode mudar
-  // pelo painel). A conta aberta/fechada roda a cada 30 s para virar no horário sem esperar a busca.
+  // ── Status da loja: horários + modo manual vêm do perfil. Com o canal ligado, a busca só acontece
+  // no aviso "loja", ao reconectar e, por segurança, a cada 30 min; sem canal, a cada 1 min.
+  // A conta aberta/fechada (e o fim da pausa) roda a cada 30 s, sem consultar o servidor.
   useEffect(() => {
     let ativo = true
+    let ultimaBusca = 0
     const buscar = async () => {
+      ultimaBusca = Date.now()
       try {
         const res = await apiFetch(`${API_PRINCIPAL}/api/restaurante/profile`)
         if (!res.ok) return
@@ -1064,7 +1050,10 @@ useEffect(() => {
     }
     buscarLojaRef.current = buscar
     buscar()
-    const id = setInterval(buscar, 60000)
+    const id = setInterval(() => {
+      const intervalo = canalLigadoRef.current ? PERFIL_SEGURANCA_COM_CANAL_MS : PERFIL_SEM_CANAL_MS
+      if (Date.now() - ultimaBusca >= intervalo) buscar()
+    }, PERFIL_SEM_CANAL_MS)
     return () => { ativo = false; buscarLojaRef.current = null; clearInterval(id) }
   }, [])
 
@@ -1085,38 +1074,32 @@ useEffect(() => {
     return () => document.removeEventListener('fullscreenchange', handleChange)
   }, [])
 
-  // ── Sidebars de filtros/configurações: fecham com clique fora ─────────────
+  // ── Sidebar de configurações: fecha com clique fora ───────────────────────
   useEffect(() => {
-    if (!showFilters && !showSettings) return
+    if (!showSettings) return
 
     const isOutside = (target) =>
-      !filtersPanelRef.current?.contains(target) &&
-      !filtersButtonRef.current?.contains(target) &&
       !settingsPanelRef.current?.contains(target) &&
       !settingsButtonRef.current?.contains(target)
 
     const handlePointerDown = (e) => {
-      if (isOutside(e.target)) {
-        setShowFilters(false)
-        setShowSettings(false)
-      }
+      if (isOutside(e.target)) setShowSettings(false)
     }
 
     document.addEventListener('mousedown', handlePointerDown)
     return () => document.removeEventListener('mousedown', handlePointerDown)
-  }, [showFilters, showSettings])
+  }, [showSettings])
 
   // ── Atalhos de teclado globais ─────────────────────────────────────────────
-  // "/" foca a busca (padrão de painéis operacionais). ESC fecha sidebars
-  // abertas ou, se a busca estiver focada com texto, limpa e desfoca.
+  // "/" foca a busca (padrão de painéis operacionais). ESC fecha a sidebar
+  // aberta ou, se a busca estiver focada com texto, limpa e desfoca.
   useEffect(() => {
     const isTypingContext = (el) =>
       el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (showFilters || showSettings) {
-          setShowFilters(false)
+        if (showSettings) {
           setShowSettings(false)
           return
         }
@@ -1141,7 +1124,7 @@ useEffect(() => {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [showFilters, showSettings, searchQuery])
+  }, [showSettings, searchQuery])
 
   // ── Bloqueio de suspensão enquanto o gestor estiver aberto ───────────────
   useEffect(() => {
@@ -1751,6 +1734,7 @@ const handlePrintBagLabels = useCallback(
         fetchPedidosRef.current()
         cumprirComandos()
         buscarPapel()
+        buscarLojaRef.current?.() // a loja pode ter mudado enquanto o canal estava fora
       },
       aoAviso: (tipo) => {
         if (tipo === 'pedido') {
@@ -1811,7 +1795,8 @@ const handlePrintBagLabels = useCallback(
           handlePrint(pedido, { automatic: true })
         }
 
-        await fetchPedidos()
+        // Com o canal ligado, o aviso do servidor já busca a lista nova (uma busca por clique, não duas)
+        if (!canalLigadoRef.current) await fetchPedidos()
         addToast(
           getOrderAction(pedido)?.successLabel || 'Status do pedido atualizado.',
           'success',
@@ -1841,7 +1826,7 @@ const handlePrintBagLabels = useCallback(
                     item._id === pedido._id ? { ...item, status: pedido.status } : item
                   )
                 )
-                await fetchPedidos()
+                if (!canalLigadoRef.current) await fetchPedidos()
                 addToast('Alteração de status desfeita.', 'info')
                 return true
               } catch (err) {
@@ -1972,41 +1957,8 @@ const handlePrintBagLabels = useCallback(
       })
     }
 
-    if (filters.tipo !== TIPO_PEDIDO_TODOS)
-      resultado = resultado.filter(
-        (p) => normalizeTipoPedido(p.tipo) === normalizeTipoPedido(filters.tipo)
-      )
-
-    if (filters.pagamento !== 'todos')
-      resultado = resultado.filter((p) =>
-        p.formaPagamento?.includes(filters.pagamento)
-      )
-
-    if (filters.valorMin)
-      resultado = resultado.filter(
-        (p) => p.total >= parseFloat(filters.valorMin)
-      )
-
-    if (filters.valorMax)
-      resultado = resultado.filter(
-        (p) => p.total <= parseFloat(filters.valorMax)
-      )
-
-    if (filters.apenasAgrupados)
-      resultado = resultado.filter(
-        (p) => p.clusterId && p.clusterSize > 1
-      )
-
-    if (filters.apenasUrgentes)
-      resultado = resultado.filter(
-        (p) => getTimeElapsed(p.createdAt).isUrgent
-      )
-
-    if (filters.apenasRecorrentes)
-      resultado = resultado.filter((p) => p.cliente?.totalPedidos >= 2)
-
     return resultado
-  }, [pedidosComClusters, searchQuery, filters])
+  }, [pedidosComClusters, searchQuery])
 
   const columns = useMemo(
     () => ({
@@ -2022,9 +1974,10 @@ const handlePrintBagLabels = useCallback(
     [pedidosFiltrados]
   )
 
+  // Todos os entregues do dia, mesmo com busca ativa (a busca só esconde cartões)
   const totalDia = useMemo(
-    () => columns.concluido.reduce((acc, curr) => acc + (curr.total || 0), 0),
-    [columns.concluido]
+    () => pedidos.reduce((acc, curr) => acc + (curr.status === 'Entregue' ? curr.total || 0 : 0), 0),
+    [pedidos]
   )
 
   // ── Alarme recorrente para pedido novo aguardando aceite ──────────────────
@@ -2048,19 +2001,6 @@ const handlePrintBagLabels = useCallback(
     }
   }, [])
 
-  const clearFilters = useCallback(() => {
-    setSearchQuery('')
-    setFilters({
-      tipo: TIPO_PEDIDO_TODOS,
-      pagamento: 'todos',
-      valorMin: '',
-      valorMax: '',
-      apenasAgrupados: false,
-      apenasUrgentes: false,
-      apenasRecorrentes: false,
-    })
-  }, [])
-
   const advanceCluster = useCallback(
     async (clusterId) => {
       const clusterOrders = pedidosComClusters.filter(
@@ -2069,7 +2009,7 @@ const handlePrintBagLabels = useCallback(
       for (const pedido of clusterOrders) {
         await advanceStatus(pedido)
       }
-      await fetchPedidos()
+      if (!canalLigadoRef.current) await fetchPedidos()
       const stillActive = pedidosComClusters.some(
         (p) =>
           p.clusterId === clusterId &&
@@ -2111,18 +2051,6 @@ const handlePrintBagLabels = useCallback(
     })
     return Array.from(clusterMap.values())
   }, [pedidosComClusters])
-
-  const activeFiltersCount = useMemo(() => {
-    let count = 0
-    if (searchQuery.trim()) count++
-    if (filters.tipo !== TIPO_PEDIDO_TODOS) count++
-    if (filters.pagamento !== 'todos') count++
-    if (filters.valorMin || filters.valorMax) count++
-    if (filters.apenasAgrupados) count++
-    if (filters.apenasUrgentes) count++
-    if (filters.apenasRecorrentes) count++
-    return count
-  }, [searchQuery, filters])
 
   const delayedOrders = useMemo(
     () => {
@@ -2366,14 +2294,24 @@ const handlePrintBagLabels = useCallback(
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar por nº do pedido, cliente ou últimos dígitos do telefone... (/)"
-                  className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 transition-all"
-                  aria-label="Buscar pedidos"
+                  placeholder="Buscar nº do pedido, cliente ou telefone"
+                  title="Atalho: tecla /"
+                  className="peer w-full pl-10 pr-10 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 transition-all"
+                  aria-label="Buscar pedidos (atalho: tecla /)"
                 />
                 <i
                   className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"
                   aria-hidden="true"
                 ></i>
+                {/* Mostra o atalho enquanto o campo está vazio e sem foco */}
+                {!searchQuery && (
+                  <kbd
+                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-gray-300 bg-white px-1.5 py-0.5 font-mono text-[11px] font-semibold leading-none text-gray-500 shadow-sm peer-focus:hidden"
+                    aria-hidden="true"
+                  >
+                    /
+                  </kbd>
+                )}
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
@@ -2389,20 +2327,23 @@ const handlePrintBagLabels = useCallback(
             {/* Ações do header */}
             <div className="flex items-center gap-3">
 
-              {/* Indicador de filtros ativos */}
-              {activeFiltersCount > 0 && (
-                <div className="hidden md:flex items-center gap-2 px-3 py-2 bg-[#7f22fe]/10 border border-[#7f22fe]/30 rounded-lg">
-                  <i
-                    className="fas fa-filter text-[#7f22fe] text-sm"
-                    aria-hidden="true"
-                  ></i>
-                  <span className="text-sm font-bold text-[#7f22fe]">
-                    {activeFiltersCount} filtro{activeFiltersCount > 1 ? 's' : ''}
+              {/* Busca ativa: os pedidos que não batem ficam escondidos, inclusive um novo que chegue */}
+              {searchQuery.trim() && (
+                <div
+                  className="hidden md:flex items-center gap-2 px-3 py-2 bg-[#7f22fe]/10 border border-[#7f22fe]/30 rounded-lg"
+                  role="status"
+                >
+                  <i className="fas fa-search text-[#7f22fe] text-sm" aria-hidden="true"></i>
+                  <span className="text-sm font-bold text-[#7f22fe] whitespace-nowrap">
+                    Busca ativa · {pedidosFiltrados.length} de {pedidosComClusters.length}{' '}
+                    {pedidosComClusters.length === 1 ? 'pedido' : 'pedidos'}
                   </span>
                   <button
-                    onClick={clearFilters}
+                    type="button"
+                    onClick={() => setSearchQuery('')}
                     className="ml-1 text-[#7f22fe] hover:text-[#6b1de0]"
-                    aria-label="Limpar todos os filtros ativos"
+                    aria-label="Limpar busca e mostrar todos os pedidos"
+                    title="Limpar busca"
                   >
                     <i className="fas fa-times text-sm" aria-hidden="true"></i>
                   </button>
@@ -2465,25 +2406,6 @@ const handlePrintBagLabels = useCallback(
 
               {nexBotStatus === 'online' && <NexBotBadge status={nexBotStatus} />}
 
-              {/* Filtros */}
-              <button
-                ref={filtersButtonRef}
-                onClick={() => {
-                  setShowFilters(!showFilters)
-                  setShowSettings(false)
-                }}
-                className={`w-10 h-10 rounded-lg transition-all border ${
-                  showFilters || activeFiltersCount > 0
-                    ? 'bg-[#7f22fe] text-white border-[#7f22fe] shadow-md'
-                    : 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600'
-                }`}
-                aria-label="Abrir filtros avançados"
-                aria-expanded={showFilters}
-                aria-controls="sidebar-filtros"
-              >
-                <i className="fas fa-sliders-h text-sm" aria-hidden="true"></i>
-              </button>
-
               {electronAPI.isElectron() && (
                 <button
                   onClick={() => electronAPI.openKitchenDisplay()}
@@ -2525,7 +2447,6 @@ const handlePrintBagLabels = useCallback(
                 ref={settingsButtonRef}
                 onClick={() => {
                   setShowSettings(!showSettings)
-                  setShowFilters(false)
                 }}
                 className={`w-10 h-10 rounded-lg transition-all active:scale-95 border ${
                   showSettings
@@ -2709,174 +2630,14 @@ const handlePrintBagLabels = useCallback(
             </div>
           </main>
 
-          {/* ── Sidebar: Filtros Avançados ──────────────────────────────── */}
-          <aside
-            ref={filtersPanelRef}
-            id="sidebar-filtros"
-            className={`absolute top-0 right-0 h-full w-96 bg-white border-l border-gray-200 shadow-xl transition-all duration-300 z-40 overflow-y-auto ${
-              showFilters && !showSettings ? 'translate-x-0' : 'translate-x-full'
-            }`}
-            aria-hidden={!(showFilters && !showSettings)}
-            aria-label="Painel de filtros avançados"
-          >
-            <div className="p-6 space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                  <i
-                    className="fas fa-sliders-h text-[#7f22fe]"
-                    aria-hidden="true"
-                  ></i>
-                  Filtros Avançados
-                </h3>
-                {activeFiltersCount > 0 && (
-                  <button
-                    onClick={clearFilters}
-                    className="text-sm text-red-600 hover:text-red-700 font-bold"
-                    aria-label="Limpar todos os filtros ativos"
-                  >
-                    Limpar Tudo
-                  </button>
-                )}
-              </div>
-
-              {/* Tipo de pedido */}
-              <div className="space-y-2">
-                <label
-                  htmlFor="filtro-tipo"
-                  className="text-sm font-bold text-gray-700 uppercase tracking-wider block"
-                >
-                  Tipo de Pedido
-                </label>
-                <select
-                  id="filtro-tipo"
-                  value={filters.tipo}
-                  onChange={(e) =>
-                    setFilters({ ...filters, tipo: e.target.value })
-                  }
-                  className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
-                >
-                  <option value={TIPO_PEDIDO_TODOS}>Todos os tipos</option>
-                  <option value={TIPO_PEDIDO_DELIVERY}>Delivery</option>
-                  <option value={TIPO_PEDIDO_BALCAO}>Balcão</option>
-                </select>
-              </div>
-
-              {/* Forma de pagamento */}
-              <div className="space-y-2">
-                <label
-                  htmlFor="filtro-pagamento"
-                  className="text-sm font-bold text-gray-700 uppercase tracking-wider block"
-                >
-                  Forma de Pagamento
-                </label>
-                <select
-                  id="filtro-pagamento"
-                  value={filters.pagamento}
-                  onChange={(e) =>
-                    setFilters({ ...filters, pagamento: e.target.value })
-                  }
-                  className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
-                >
-                  <option value="todos">Todas as formas</option>
-                  <option value="pix">PIX</option>
-                  <option value="dinheiro">Dinheiro</option>
-                  <option value="cartao">Cartão</option>
-                  <option value="debito">Débito</option>
-                  <option value="credito">Crédito</option>
-                </select>
-              </div>
-
-              {/* Faixa de valor */}
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-gray-700 uppercase tracking-wider block">
-                  Faixa de Valor
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <input
-                    type="number"
-                    placeholder="Min R$"
-                    value={filters.valorMin}
-                    onChange={(e) =>
-                      setFilters({ ...filters, valorMin: e.target.value })
-                    }
-                    className="px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
-                    aria-label="Valor mínimo do pedido"
-                    min="0"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Máx R$"
-                    value={filters.valorMax}
-                    onChange={(e) =>
-                      setFilters({ ...filters, valorMax: e.target.value })
-                    }
-                    className="px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
-                    aria-label="Valor máximo do pedido"
-                    min="0"
-                  />
-                </div>
-              </div>
-
-              {/* Checkboxes de filtro */}
-              <div className="space-y-3 pt-4 border-t border-gray-200">
-                <FilterCheckbox
-                  checked={filters.apenasAgrupados}
-                  onChange={(val) =>
-                    setFilters({ ...filters, apenasAgrupados: val })
-                  }
-                  label="Apenas Pedidos Agrupados"
-                  icon="route"
-                  description="Mostrar só pedidos próximos entre si"
-                />
-                <FilterCheckbox
-                  checked={filters.apenasUrgentes}
-                  onChange={(val) =>
-                    setFilters({ ...filters, apenasUrgentes: val })
-                  }
-                  label="Apenas Pedidos Urgentes"
-                  icon="clock"
-                  description="Pedidos com mais de 30 minutos"
-                />
-                <FilterCheckbox
-                  checked={filters.apenasRecorrentes}
-                  onChange={(val) =>
-                    setFilters({ ...filters, apenasRecorrentes: val })
-                  }
-                  label="Apenas Clientes Recorrentes"
-                  icon="star"
-                  description="Clientes com 2+ pedidos"
-                />
-              </div>
-
-              {/* Resultado do filtro */}
-              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
-                <p className="text-sm font-bold text-gray-700 mb-2">
-                  Resultados:
-                </p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Filtrados:</span>
-                    <span className="font-bold">{pedidosFiltrados.length}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Total:</span>
-                    <span className="font-bold text-gray-400">
-                      {pedidosComClusters.length}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </aside>
-
           {/* ── Sidebar: Configurações ─────────────────────────────────── */}
           <aside
             ref={settingsPanelRef}
             id="sidebar-configuracoes"
             className={`absolute top-0 right-0 h-full w-96 bg-white border-l border-gray-200 shadow-xl transition-all duration-300 z-40 overflow-y-auto ${
-              showSettings && !showFilters ? 'translate-x-0' : 'translate-x-full'
+              showSettings ? 'translate-x-0' : 'translate-x-full'
             }`}
-            aria-hidden={!(showSettings && !showFilters)}
+            aria-hidden={!showSettings}
             aria-label="Painel de configurações"
           >
             <div className="p-4 space-y-3">
@@ -3546,60 +3307,6 @@ function Switch({ checked, onChange, ariaLabel }) {
         }`}
         aria-hidden="true"
       />
-    </button>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FilterCheckbox — checkbox estilizado com ícone e descrição
-// ─────────────────────────────────────────────────────────────────────────────
-
-function FilterCheckbox({ checked, onChange, label, icon, description }) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={`w-full p-4 rounded-lg border-2 transition-all text-left focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
-        checked
-          ? 'bg-[#7f22fe]/10 border-[#7f22fe]'
-          : 'bg-gray-50 border-gray-200 hover:border-gray-300'
-      }`}
-      role="checkbox"
-      aria-checked={checked}
-      aria-label={label}
-      type="button"
-    >
-      <div className="flex items-start gap-3">
-        <div
-          className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
-            checked
-              ? 'bg-[#7f22fe] border-[#7f22fe]'
-              : 'bg-white border-gray-300'
-          }`}
-          aria-hidden="true"
-        >
-          {checked && (
-            <i className="fas fa-check text-white text-sm"></i>
-          )}
-        </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <i
-              className={`fas fa-${icon} text-sm ${
-                checked ? 'text-[#7f22fe]' : 'text-gray-500'
-              }`}
-              aria-hidden="true"
-            ></i>
-            <span
-              className={`text-sm font-bold ${
-                checked ? 'text-[#7f22fe]' : 'text-gray-900'
-              }`}
-            >
-              {label}
-            </span>
-          </div>
-          <p className="text-sm text-gray-600">{description}</p>
-        </div>
-      </div>
     </button>
   )
 }
