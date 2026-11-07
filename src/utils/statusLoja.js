@@ -47,3 +47,30 @@ export function resolverStatusLoja(horarios, statusLoja, agora = new Date()) {
   // auto (ou pausa que já venceu)
   return { estado: abertaPeloHorario(horarios, agora) ? 'aberta' : 'fechada', manual: false, pausaAte: null }
 }
+
+/**
+ * Quando o status pode mudar a partir de `agora`: um horário de abrir ou fechar ou o fim da pausa.
+ * O quadro agenda uma vez até lá, em vez de recalcular a cada 30 s. Horário de outro dia da semana só
+ * causa uma conferência a mais; no máximo espera até a meia-noite.
+ */
+export function proximaTrocaStatusLoja(horarios, statusLoja, agora = new Date()) {
+  const meiaNoite = new Date(agora)
+  meiaNoite.setHours(24, 0, 0, 0)
+  let proxima = meiaNoite
+  const considerar = (data) => { if (data > agora && data < proxima) proxima = data }
+
+  const pausaAte = statusLoja?.pausaAte ? new Date(statusLoja.pausaAte) : null
+  if (pausaAte && !Number.isNaN(pausaAte.getTime())) considerar(pausaAte)
+  ;(Array.isArray(horarios) ? horarios : []).forEach(horario => {
+    periodos(horario).forEach(({ inicio, fim }) => {
+      [inicio, fim].forEach(valor => {
+        const m = minutos(valor)
+        if (m === null) return
+        const data = new Date(agora)
+        data.setHours(Math.floor(m / 60), m % 60, 0, 0)
+        considerar(data)
+      })
+    })
+  })
+  return proxima
+}

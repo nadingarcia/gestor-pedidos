@@ -13,7 +13,7 @@ import { useOrderClustering } from '@hooks/useOrderClustering'
 import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch, API_PRINCIPAL, usandoServidorReserva, aoMudarServidor } from '../utils/apiFetch'
-import { resolverStatusLoja } from '../utils/statusLoja'
+import { resolverStatusLoja, proximaTrocaStatusLoja } from '../utils/statusLoja'
 import { conectarCanal } from '../utils/tempoReal'
 import { getNomeComputador, getNomeDoSistema, salvarNomeComputador } from '../utils/gestorIdentidade'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
@@ -364,6 +364,20 @@ const getApiErrorMessage = async (res, fallbackMessage) => {
   } catch {
     return fallbackMessage
   }
+}
+
+// "há Xs" / "há N min" desde um instante. Componente próprio para só este texto mudar a cada
+// segundo, não o quadro de pedidos inteiro.
+function TempoDesde({ desde, emMinutos = false }) {
+  const calcular = () => Math.max(0, Math.floor((Date.now() - desde) / 1000))
+  const [segundos, setSegundos] = useState(calcular)
+  useEffect(() => {
+    const atualizar = () => setSegundos(Math.max(0, Math.floor((Date.now() - desde) / 1000)))
+    atualizar()
+    const id = setInterval(atualizar, emMinutos ? 15000 : 1000)
+    return () => clearInterval(id)
+  }, [desde, emMinutos])
+  return emMinutos ? Math.floor(segundos / 60) : segundos
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -829,7 +843,10 @@ export default function OrderManager() {
 
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
-  const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0)
+  // O quadro não guarda segundos: o texto "há Xs" fica em <TempoDesde> (só ele muda a cada segundo).
+  // Aqui só o que muda o quadro: 60 s sem atualizar (aviso vermelho) e o minuto atual (pedidos atrasados).
+  const [semAtualizar, setSemAtualizar] = useState(false)
+  const [agoraMinuto, setAgoraMinuto] = useState(() => Date.now())
 
   // ── Status da loja para o cliente (aberta/fechada/pausada) e servidor em uso ─
   const [lojaInfo, setLojaInfo] = useState(null) // { horarios, statusLoja }
@@ -1023,15 +1040,20 @@ useEffect(() => {
     }
   }, [settings.appEntregador])
 
-  // ── Timer "Atualizado há Xs" ───────────────────────────────────────────────
+  // ── "Sem atualizar há N min": um agendamento só, 60 s depois da última atualização ──────────
+  // (antes um relógio de 1 s refazia o quadro inteiro o dia todo para mudar este número)
   useEffect(() => {
     if (!lastUpdated) return
-    setSecondsSinceUpdate(0)
-    const id = setInterval(() => {
-      setSecondsSinceUpdate(Math.floor((Date.now() - lastUpdated) / 1000))
-    }, 1000)
-    return () => clearInterval(id)
+    setSemAtualizar(false)
+    const id = setTimeout(() => setSemAtualizar(true), Math.max(0, lastUpdated + 60000 - Date.now()))
+    return () => clearTimeout(id)
   }, [lastUpdated])
+
+  // Pedidos atrasados contam em minutos: o quadro confere uma vez por minuto
+  useEffect(() => {
+    const id = setInterval(() => setAgoraMinuto(Date.now()), 60000)
+    return () => clearInterval(id)
+  }, [])
 
   // ── Status da loja: horários + modo manual vêm do perfil. Com o canal ligado, a busca só acontece
   // no aviso "loja", ao reconectar e, por segurança, a cada 30 min; sem canal, a cada 1 min.
@@ -1057,12 +1079,22 @@ useEffect(() => {
     return () => { ativo = false; buscarLojaRef.current = null; clearInterval(id) }
   }, [])
 
+  // Aberta/fechada/pausada: recalcula só na próxima troca (abrir, fechar, fim da pausa ou meia-noite),
+  // e só troca o estado se mudou. Antes recalculava a cada 30 s e refazia o quadro mesmo sem mudar nada.
   useEffect(() => {
     if (!lojaInfo) return
-    const calcular = () => setStatusLoja(resolverStatusLoja(lojaInfo.horarios, lojaInfo.statusLoja))
+    let id = null
+    const calcular = () => {
+      const novo = resolverStatusLoja(lojaInfo.horarios, lojaInfo.statusLoja)
+      setStatusLoja(atual => (
+        atual && atual.estado === novo.estado && atual.manual === novo.manual
+          && String(atual.pausaAte) === String(novo.pausaAte) ? atual : novo
+      ))
+      const alvo = proximaTrocaStatusLoja(lojaInfo.horarios, lojaInfo.statusLoja).getTime() + 1000
+      id = setTimeout(calcular, Math.max(1000, alvo - Date.now()))
+    }
     calcular()
-    const id = setInterval(calcular, 30000)
-    return () => clearInterval(id)
+    return () => clearTimeout(id)
   }, [lojaInfo])
 
   useEffect(() => aoMudarServidor(setServidorReserva), [])
@@ -1537,7 +1569,7 @@ const handlePrintBagLabels = useCallback(
       
       // Registra timestamp para o indicador "Atualizado há Xs"
       setLastUpdated(Date.now())
-      setSecondsSinceUpdate(0)
+      setSemAtualizar(false)
     } catch (error) {
       // AbortError é esperado e silencioso — não é um erro real
       if (error.name === 'AbortError') return
@@ -2054,9 +2086,7 @@ const handlePrintBagLabels = useCallback(
 
   const delayedOrders = useMemo(
     () => {
-      const elapsedAt = lastUpdated
-        ? lastUpdated + secondsSinceUpdate * 1000
-        : Date.now()
+      const elapsedAt = Math.max(agoraMinuto, lastUpdated || 0)
 
       return pedidosComClusters.filter((p) => {
         if (['Entregue', 'Cancelado'].includes(p.status)) return false
@@ -2064,7 +2094,7 @@ const handlePrintBagLabels = useCallback(
         return getTimeElapsed(p.createdAt, elapsedAt).minutes > estimatedMins
       })
     },
-    [pedidosComClusters, lastUpdated, secondsSinceUpdate]
+    [pedidosComClusters, lastUpdated, agoraMinuto]
   )
 
   const operationalAlerts = useMemo(() => {
@@ -2221,14 +2251,14 @@ const handlePrintBagLabels = useCallback(
                 {isOnline ? (
                   <>
                     {/* Prioridade: pedidos parados (nem o principal nem a reserva responderam) > reserva em uso */}
-                    {lastUpdated && !isFromCache && secondsSinceUpdate >= 60 ? (
+                    {lastUpdated && !isFromCache && semAtualizar ? (
                       <span
                         className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-bold text-red-700"
                         title="Os pedidos não estão sendo atualizados: o servidor não respondeu. Pedidos novos podem não aparecer."
                         role="alert"
                       >
                         <i className="fas fa-triangle-exclamation text-[10px]" aria-hidden="true" />
-                        Sem atualizar há {Math.floor(secondsSinceUpdate / 60)} min
+                        Sem atualizar há <TempoDesde desde={lastUpdated} emMinutos /> min
                       </span>
                     ) : servidorReserva ? (
                       <span
@@ -2262,7 +2292,7 @@ const handlePrintBagLabels = useCallback(
                       </span>
                     ) : lastUpdated && !isFromCache ? (
                       <span className="text-xs text-gray-400 hidden lg:inline">
-                        {statusLoja ? '· ' : ''}Atualizado há {secondsSinceUpdate}s
+                        {statusLoja ? '· ' : ''}Atualizado há <TempoDesde desde={lastUpdated} />s
                       </span>
                     ) : null}
                     {isFromCache && (
@@ -4323,40 +4353,27 @@ function OrderModal({
 //
 // Melhorias vs original:
 // 1. aria-live="polite" + role="status" — leitores de tela anunciam cada toast
-// 2. Barra de progresso com valor real via setInterval (não CSS puro)
-//    → o operador vê exatamente quanto tempo ainda tem para ler
+// 2. Barra de progresso por animação de CSS (pausa com o mouse em cima) e um único setTimeout
+//    para fechar: antes era um setInterval de 50 ms refazendo o aviso 20 vezes por segundo
 // ─────────────────────────────────────────────────────────────────────────────
 
 function Toast({ toast, onDismiss }) {
-  const [progress, setProgress] = useState(100)
   const [actionLoading, setActionLoading] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
 
-  // Tempo restante em ms — sobrevive a pausas do hover, decrementado pelo
-  // tempo real decorrido a cada tick (não por uma contagem fixa de ticks).
-  const remainingRef = useRef(toast.duration || 6000)
-  const lastTickRef = useRef(Date.now())
+  // Tempo restante em ms — sobrevive a pausas do hover
+  const totalDuration = toast.duration || 6000
+  const remainingRef = useRef(totalDuration)
 
   useEffect(() => {
     if (isPaused) return
-
-    const totalDuration = toast.duration || 6000
-    lastTickRef.current = Date.now()
-
-    const id = setInterval(() => {
-      const now = Date.now()
-      remainingRef.current = Math.max(0, remainingRef.current - (now - lastTickRef.current))
-      lastTickRef.current = now
-      setProgress(Math.max(0, (remainingRef.current / totalDuration) * 100))
-
-      if (remainingRef.current <= 0) {
-        clearInterval(id)
-        onDismiss(toast.id)
-      }
-    }, 50)
-
-    return () => clearInterval(id)
-  }, [isPaused, toast.duration, toast.id, onDismiss])
+    const inicio = Date.now()
+    const id = setTimeout(() => onDismiss(toast.id), remainingRef.current)
+    return () => {
+      clearTimeout(id)
+      remainingRef.current = Math.max(0, remainingRef.current - (Date.now() - inicio))
+    }
+  }, [isPaused, toast.id, onDismiss])
 
   const styles = {
     success: { bar: 'bg-emerald-500', box: 'bg-white border-emerald-300 text-emerald-900', icon: 'fa-check-circle text-emerald-500' },
@@ -4399,14 +4416,11 @@ function Toast({ toast, onDismiss }) {
           )}
         </button>
       )}
-      {/* Barra de progresso com valor real — não é apenas animação CSS */}
+      {/* Barra do tempo restante: animação de CSS, parada enquanto o mouse está em cima */}
       <div
-        className={`absolute bottom-0 left-0 h-1 rounded-b-xl transition-none ${s.bar}`}
-        style={{ width: `${progress}%` }}
-        role="progressbar"
-        aria-valuenow={Math.round(progress)}
-        aria-valuemin={0}
-        aria-valuemax={100}
+        className={`absolute bottom-0 left-0 h-1 w-full origin-left rounded-b-xl ${s.bar}`}
+        style={{ animation: `toast-barra ${totalDuration}ms linear forwards`, animationPlayState: isPaused ? 'paused' : 'running' }}
+        aria-hidden="true"
       />
     </div>
   )

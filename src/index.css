@@ -299,3 +299,8 @@ a:focus-visible {
     border: 2px solid white;
     box-shadow: 0 3px 6px rgba(59, 130, 246, 0.4);
   }
+/* Barra de tempo dos avisos (Toast em OrderManager.jsx): anima no CSS, sem relógio no JS */
+@keyframes toast-barra {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}

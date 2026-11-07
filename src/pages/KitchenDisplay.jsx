@@ -91,8 +91,13 @@ export default function KitchenDisplay() {
   )
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
+    // A tela só mostra minutos (relógio e tempo de cada pedido): muda na virada do minuto, não a cada segundo
+    let id = null
+    const agendar = () => {
+      id = setTimeout(() => { setNow(Date.now()); agendar() }, 60000 - (Date.now() % 60000) + 50)
+    }
+    agendar()
+    return () => clearTimeout(id)
   }, [])
 
   useEffect(() => {

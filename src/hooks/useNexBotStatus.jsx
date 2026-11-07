@@ -1,12 +1,12 @@
 // src/hooks/useNexBotStatus.jsx
-// Poll leve (30s) — só leitura de status, sem QR, sem connect/disconnect.
+// Poll leve (60 s, só com a janela à vista) — só leitura de status, sem QR, sem connect/disconnect.
 // Projetado para o funcionário saber se as notificações estão ativas.
 
 import { useState, useEffect } from 'react'
 import { apiFetch } from '@utils/apiFetch' // <-- Importe o seu novo apiFetch
 
 const BOT_URL      = "https://nexbot.nexfood.app"
-const POLL_INTERVAL = 30_000  // 30s — suficiente para feedback visual
+const POLL_INTERVAL = 60_000  // o bot raramente cai; minimizado ninguém vê o selo, então não consulta
 
 /**
  * @returns {'online' | 'offline' | 'checking'}
@@ -45,9 +45,23 @@ export function useNexBotStatus() {
       }
     }
 
-    check()
-    const id = setInterval(check, POLL_INTERVAL)
-    return () => { cancelled = true; clearInterval(id) }
+    // Antes: a cada 30 s o dia todo (2.880 consultas por computador). Agora: 60 s com a janela à vista
+    // e uma consulta ao voltar para ela.
+    let id = null
+    const ligar = () => {
+      clearInterval(id)
+      id = null
+      if (document.hidden) return
+      check()
+      id = setInterval(check, POLL_INTERVAL)
+    }
+    ligar()
+    document.addEventListener('visibilitychange', ligar)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', ligar)
+    }
   }, [])
 
   return status
