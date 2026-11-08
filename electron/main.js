@@ -241,28 +241,52 @@ ipcMain.handle('get-printers', async () => {
 
 
 // 🔹 Impressão
-ipcMain.handle('print-order', async (event, { printerName, html }) => {
-  try {
-    const win = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-      },
-    })
+const LIMITE_IMPRESSAO_MS = 30 * 1000
 
-    // Escreve em arquivo temporário (evita limite do data: URL)
-    const os = await import('os')
-    const fs = await import('fs')
-    const tmpPath = path.join(os.default.tmpdir(), `nexfood_print_${Date.now()}.html`)
-    fs.default.writeFileSync(tmpPath, html, 'utf-8')
+ipcMain.handle('print-order', (event, { printerName, html }) => new Promise((resolve) => {
+  let win = null
+  let tmpPath = null
+  let encerrado = false
+  let fs = null
 
-    await win.loadFile(tmpPath)
+  // Primeiro resultado vale: resposta que chegar depois do tempo limite é ignorada
+  const encerrar = (resultado) => {
+    if (encerrado) return
+    encerrado = true
+    clearTimeout(tempoLimite)
+    if (tmpPath) { try { fs.default.unlinkSync(tmpPath) } catch {} }
+    if (win && !win.isDestroyed()) win.destroy()
+    resolve(resultado)
+  }
 
-    // Aguarda renderização completa antes de imprimir
-    await new Promise(resolve => setTimeout(resolve, 500))
+  // webContents.print pode nunca chamar o callback: sem isto, o pedido ficava "Imprimindo" para sempre
+  const tempoLimite = setTimeout(() => {
+    log.error('Impressão sem resposta em', LIMITE_IMPRESSAO_MS, 'ms na impressora', printerName)
+    encerrar({ success: false, error: 'A impressora não respondeu' })
+  }, LIMITE_IMPRESSAO_MS)
 
-    return await new Promise((resolve) => {
+  ;(async () => {
+    try {
+      win = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+        },
+      })
+
+      // Escreve em arquivo temporário (evita limite do data: URL)
+      const os = await import('os')
+      fs = await import('fs')
+      tmpPath = path.join(os.default.tmpdir(), `nexfood_print_${Date.now()}.html`)
+      fs.default.writeFileSync(tmpPath, html, 'utf-8')
+
+      await win.loadFile(tmpPath)
+
+      // Aguarda renderização completa antes de imprimir
+      await new Promise(resolve => setTimeout(resolve, 500))
+      if (encerrado) return
+
       win.webContents.print(
         {
           silent: true,
@@ -277,25 +301,17 @@ ipcMain.handle('print-order', async (event, { printerName, html }) => {
           scaleFactor: 100,
         },
         (success, failureReason) => {
-          // Limpa arquivo temp
-          try { fs.default.unlinkSync(tmpPath) } catch {}
-          win.destroy()
-
-          if (!success) {
-            log.error('Erro na impressão:', failureReason)
-            resolve({ success: false, error: failureReason })
-          } else {
-            resolve({ success: true })
-          }
+          if (encerrado) return
+          if (!success) log.error('Erro na impressão:', failureReason)
+          encerrar(success ? { success: true } : { success: false, error: failureReason })
         }
       )
-    })
-
-  } catch (error) {
-    log.error('Erro ao imprimir:', error)
-    return { success: false, error: error.message }
-  }
-})
+    } catch (error) {
+      if (!encerrado) log.error('Erro ao imprimir:', error)
+      encerrar({ success: false, error: error.message })
+    }
+  })()
+}))
 
 let powerBlockerId = null
 

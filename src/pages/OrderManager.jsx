@@ -49,6 +49,18 @@ notificationAudio.preload = 'auto'
 const CACHE_KEY = 'nexfood_pedidos_cache'
 const CACHE_MAX_AGE_MS = 8 * 60 * 60 * 1000 // 8 horas
 const PRINT_STATUS_KEY = 'nexfood_order_print_status'
+// Reserva do renderer: um pouco acima dos 30 s do processo principal, que normalmente responde antes
+const LIMITE_RESPOSTA_IMPRESSAO_MS = 35 * 1000
+const AVISO_FILA_IMPRESSORA = 'Confira a fila da impressora antes de reimprimir: o trabalho pode sair atrasado.'
+const PREFIXO_NEXBOT = 'NexBot:'
+// Toque logo depois do alarme aparecer é engano (ex.: duplo clique no alarme anterior da fila)
+const CHAMADO_IGNORAR_TOQUE_MS = 500
+
+const lerRecadoChamado = (recado) => {
+  const texto = (recado || '').trim()
+  if (!texto.startsWith(PREFIXO_NEXBOT)) return { doNexBot: false, recado: recado || null }
+  return { doNexBot: true, recado: texto.slice(PREFIXO_NEXBOT.length).trim() || null }
+}
 const ORDER_REFRESH_SECONDS = 10
 // Com o canal de avisos ligado, pedido novo chega em segundos e a consulta vira só a reserva
 const ORDER_REFRESH_COM_CANAL_MS = 30 * 1000
@@ -340,7 +352,7 @@ const getPrintStatusInfo = (printStatus) => {
       className: 'bg-blue-50 border-blue-200 text-blue-700',
     },
     failed: {
-      label: 'Falha na impressão',
+      label: `Falha na impressão. ${AVISO_FILA_IMPRESSORA}`,
       shortLabel: 'FALHA IMP.',
       icon: 'fa-triangle-exclamation',
       className: 'bg-red-50 border-red-200 text-red-700',
@@ -858,7 +870,12 @@ export default function OrderManager() {
   const papelRef = useRef(null)
   const [papel, setPapel] = useState(null)
   const [computadoresOnline, setComputadoresOnline] = useState(1)
-  const [chamado, setChamado] = useState(null) // { id, numero } quando o dono chama pelo celular
+  // Fila de alarmes (do dono pelo celular ou do NexBot): o primeiro aparece e, ao responder, vem o próximo
+  const [chamados, setChamados] = useState([])
+  const chamado = chamados[0] || null
+  const chamadoMostradoEmRef = useRef(0)
+  useEffect(() => { chamadoMostradoEmRef.current = Date.now() }, [chamado?.id])
+  const [chamadoVendoPedidoId, setChamadoVendoPedidoId] = useState(null)
   const [nomeComputador, setNomeComputador] = useState(getNomeComputador)
   const ultimaBuscaPedidosRef = useRef(0)
   const [servidorReserva, setServidorReserva] = useState(usandoServidorReserva)
@@ -1249,32 +1266,36 @@ useEffect(() => {
     async (html) => {
       const printerName = settingsRef.current.impressoraAutomatica
 
+      const avisarFalha = (errorMessage) => {
+        setPrintFailure({ printerName, message: errorMessage, at: Date.now() })
+        addToast(
+          `Falha ao imprimir em "${printerName}": ${errorMessage.replace(/\.$/, '')}. ${AVISO_FILA_IMPRESSORA}`,
+          'error',
+          14000
+        )
+        return false
+      }
+
+      let tempoLimite
       try {
-        const res = await electronAPI.printOrder(printerName, html)
+        const semResposta = new Promise((resolve) => {
+          tempoLimite = setTimeout(
+            () => resolve({ success: false, error: 'A impressora não respondeu' }),
+            LIMITE_RESPOSTA_IMPRESSAO_MS
+          )
+        })
+        const res = await Promise.race([electronAPI.printOrder(printerName, html), semResposta])
 
         if (res?.success) {
           setPrintFailure(null)
           return true
         }
 
-        const errorMessage =
-          res?.error || 'Verifique se a impressora está ligada e instalada.'
-        setPrintFailure({ printerName, message: errorMessage, at: Date.now() })
-        addToast(
-          'Falha ao imprimir em "' + printerName + '": ' + errorMessage,
-          'error',
-          14000
-        )
-        return false
+        return avisarFalha(res?.error || 'Verifique se a impressora está ligada e instalada.')
       } catch (err) {
-        const errorMessage = err?.message || 'erro inesperado no spooler de impressão.'
-        setPrintFailure({ printerName, message: errorMessage, at: Date.now() })
-        addToast(
-          'Falha ao imprimir em "' + printerName + '": ' + errorMessage,
-          'error',
-          14000
-        )
-        return false
+        return avisarFalha(err?.message || 'erro inesperado no spooler de impressão.')
+      } finally {
+        clearTimeout(tempoLimite)
       }
     },
     [addToast]
@@ -1629,12 +1650,19 @@ const handlePrintBagLabels = useCallback(
 
         if (comando.tipo === 'chamar') {
           // Fica "assumido" até alguém responder: é isso que o dono vê como resposta no celular
-          let numero = null
+          let pedido = null
           if (comando.pedido) {
             const resPedido = await apiFetch(`${API_PRINCIPAL}/api/pedidos/${comando.pedido}`).catch(() => null)
-            if (resPedido?.ok) numero = (await resPedido.json()).numeroPedido || null
+            if (resPedido?.ok) pedido = await resPedido.json()
           }
-          setChamado({ id: comando._id, numero, recado: comando.recado || null })
+          const novoChamado = {
+            id: comando._id,
+            numero: pedido?.numeroPedido || null,
+            pedidoId: comando.pedido || null,
+            pedido,
+            ...lerRecadoChamado(comando.recado),
+          }
+          setChamados((fila) => [...fila, novoChamado])
           electronAPI.chamarAtencao?.()
           continue
         }
@@ -1730,8 +1758,8 @@ const handlePrintBagLabels = useCallback(
 
   const responderChamado = useCallback(async (resultado = 'visto') => {
     const atual = chamado
-    setChamado(null)
-    if (!atual) return
+    if (!atual || Date.now() - chamadoMostradoEmRef.current < CHAMADO_IGNORAR_TOQUE_MS) return
+    setChamados((fila) => fila.filter((item) => item.id !== atual.id))
     await apiFetch(`${API_PRINCIPAL}/api/gestor/comandos/${atual.id}/concluir`, {
       method: 'POST',
       body: JSON.stringify({ ok: true, resultado }),
@@ -2139,7 +2167,7 @@ const handlePrintBagLabels = useCallback(
         severity: 'critical',
         icon: 'fa-print',
         label: 'Falha ao imprimir',
-        detail: printFailure.printerName || printFailure.message,
+        detail: `${printFailure.printerName || printFailure.message}. ${AVISO_FILA_IMPRESSORA}`,
       })
     }
 
@@ -2192,6 +2220,11 @@ const handlePrintBagLabels = useCallback(
       <KanbanSkeleton hasNewOrdersColumn={!settings.aceitarAutomatico} />
     )
   }
+
+  const pedidoDoChamado = chamado
+    ? pedidosComClusters.find((p) => p._id === chamado.pedidoId) || chamado.pedido
+    : null
+  const chamadoRecolhido = Boolean(chamado && selectedOrder && chamadoVendoPedidoId === chamado.id)
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
@@ -3146,8 +3179,38 @@ const handlePrintBagLabels = useCallback(
           />
         )}
 
-        {chamado && (
+        {chamado && chamadoRecolhido && (
+          // Com o pedido do alarme aberto, o alarme vira uma barra para não cobrir o pedido
           <div
+            className="fixed left-1/2 top-3 z-[100] flex w-[min(720px,calc(100vw-1.5rem))] -translate-x-1/2 items-center gap-3 rounded-xl bg-violet-900 px-4 py-3 text-white shadow-2xl"
+            role="alertdialog"
+            aria-labelledby="chamado-barra-titulo"
+          >
+            <i className="fas fa-bell fa-shake text-xl" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p id="chamado-barra-titulo" className="font-bold">Cliente precisa de atendimento</p>
+              {chamado.recado && <p className="truncate text-sm text-violet-100">{chamado.recado}</p>}
+            </div>
+            <button
+              type="button"
+              onClick={() => responderChamado('visto')}
+              className="shrink-0 rounded-lg bg-white px-3 py-2 text-sm font-bold text-violet-900 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-300"
+            >
+              Vi, vou responder
+            </button>
+            <button
+              type="button"
+              onClick={() => responderChamado('ocupado')}
+              className="shrink-0 rounded-lg border border-violet-300 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 focus:outline-none focus:ring-4 focus:ring-violet-300"
+            >
+              Agora não posso
+            </button>
+          </div>
+        )}
+
+        {chamado && !chamadoRecolhido && (
+          <div
+            key={chamado.id}
             className="fixed inset-0 z-[100] flex items-center justify-center bg-violet-900/80 p-6"
             role="alertdialog"
             aria-modal="true"
@@ -3157,23 +3220,39 @@ const handlePrintBagLabels = useCallback(
               <span className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-100 text-violet-700">
                 <i className="fas fa-bell fa-shake text-3xl" aria-hidden="true" />
               </span>
-              <h2 id="chamado-titulo" className="text-2xl font-bold text-gray-900">O dono está chamando</h2>
+              <h2 id="chamado-titulo" className="text-2xl font-bold text-gray-900">
+                {chamado.doNexBot ? 'Cliente precisa de atendimento' : 'O dono está chamando'}
+              </h2>
               {chamado.recado && (
                 <p className="mt-3 rounded-xl bg-violet-50 px-4 py-3 text-xl font-bold text-violet-900">{chamado.recado}</p>
               )}
-              <p className="mt-2 text-base text-gray-600">
-                {chamado.numero
-                  ? `Pedido #${chamado.numero}.`
-                  : chamado.recado ? 'Responda para o dono saber que você viu.' : 'Confira os pedidos, por favor.'}
-              </p>
+              {(chamado.numero || !chamado.doNexBot) && (
+                <p className="mt-2 text-base text-gray-600">
+                  {chamado.numero
+                    ? `Pedido #${chamado.numero}.`
+                    : chamado.recado ? 'Responda para o dono saber que você viu.' : 'Confira os pedidos, por favor.'}
+                </p>
+              )}
               <button
                 type="button"
                 autoFocus
                 onClick={() => responderChamado('visto')}
                 className="mt-6 w-full rounded-xl bg-violet-600 px-6 py-4 text-lg font-bold text-white hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300"
               >
-                Vi, já estou vendo
+                {chamado.doNexBot ? 'Vi, vou responder' : 'Vi, já estou vendo'}
               </button>
+              {chamado.doNexBot && pedidoDoChamado && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChamadoVendoPedidoId(chamado.id)
+                    setSelectedOrder(pedidoDoChamado)
+                  }}
+                  className="mt-2 w-full rounded-xl border border-violet-300 bg-violet-50 px-6 py-3 text-base font-bold text-violet-800 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"
+                >
+                  Ver pedido
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => responderChamado('ocupado')}
@@ -3181,7 +3260,9 @@ const handlePrintBagLabels = useCallback(
               >
                 Agora não posso
               </button>
-              <p className="mt-3 text-xs text-gray-400">O dono recebe a confirmação no celular.</p>
+              <p className="mt-3 text-xs text-gray-400">
+                {chamado.doNexBot ? 'Responda o cliente no WhatsApp da loja' : 'O dono recebe a confirmação no celular.'}
+              </p>
             </div>
           </div>
         )}
@@ -3635,7 +3716,7 @@ function OrderCard({
               onPrint()
             }}
             className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-black hover:brightness-95 ${printInfo.className}`}
-            title={`${printStatus?.error || printInfo.label}. Clique para tentar novamente.`}
+            title={`${printInfo.label} Clique para tentar novamente.`}
           >
             <i className="fas fa-rotate text-[9px]" aria-hidden="true"></i>
             {printInfo.shortLabel}
@@ -3853,6 +3934,8 @@ function OrderModal({
   const discountInfo = getDiscountInfo(currentPedido)
   const orderAction = getOrderAction(currentPedido)
   const printInfo = getPrintStatusInfo(printStatus)
+  // Entregue nunca mostra "Imprimindo"; o botão segue travado até a impressão em andamento terminar
+  const mostrarImprimindo = printStatus?.status === 'printing' && currentPedido.status !== 'Entregue'
   const modalPaymentInfo = getPaymentInfo(currentPedido)
   const itemCount = (currentPedido.itens || []).reduce(
     (total, item) => total + Number(item.quantidade || 0),
@@ -4236,7 +4319,7 @@ function OrderModal({
                 >
                   <i
                     className={`fas ${
-                      printStatus?.status === 'printing'
+                      mostrarImprimindo
                         ? 'fa-spinner fa-spin'
                         : printStatus?.status === 'failed'
                         ? 'fa-rotate'
@@ -4244,7 +4327,7 @@ function OrderModal({
                     } mr-1.5`}
                     aria-hidden="true"
                   ></i>
-                  {printStatus?.status === 'printing'
+                  {mostrarImprimindo
                     ? 'Imprimindo...'
                     : printStatus?.status === 'failed'
                     ? 'Tentar'
