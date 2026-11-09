@@ -153,7 +153,9 @@ autoUpdater.on('download-progress', (progressObj) => {
 // Atualizar pelo celular: o dono pede, o gestor baixa e reinicia sozinho (sem a pergunta "Deseja reiniciar?")
 let atualizacaoBaixada = null
 let instalarAoBaixar = false
-const reiniciarParaAtualizar = () => setTimeout(() => autoUpdater.quitAndInstall(false, true), 3000)
+// Silencioso (/S) e reabrindo sozinho: sem isso o NSIS assistido (oneClick: false) abre o assistente e fica esperando alguém clicar
+const instalarAtualizacao = () => autoUpdater.quitAndInstall(true, true)
+const reiniciarParaAtualizar = () => setTimeout(instalarAtualizacao, 3000)
 
 autoUpdater.on('update-downloaded', (info) => {
   log.info('Atualização baixada.')
@@ -172,7 +174,7 @@ autoUpdater.on('update-downloaded', (info) => {
     buttons: ['Sim, Reiniciar', 'Depois']
   }).then((returnValue) => {
     if (returnValue.response === 0) {
-      autoUpdater.quitAndInstall(false, true)
+      instalarAtualizacao()
     }
   })
 })
@@ -197,7 +199,7 @@ ipcMain.handle('atualizar-agora', async () => {
 })
 
 ipcMain.handle('install-update', () => {
-  autoUpdater.quitAndInstall(false, true)
+  instalarAtualizacao()
   return { success: true }
 })
 
