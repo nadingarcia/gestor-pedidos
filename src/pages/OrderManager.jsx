@@ -15,6 +15,7 @@ import { useNexBotStatus } from '@hooks/useNexBotStatus'
 import { apiFetch, API_PRINCIPAL, usandoServidorReserva, aoMudarServidor } from '../utils/apiFetch'
 import { resolverStatusLoja, proximaTrocaStatusLoja } from '../utils/statusLoja'
 import { conectarCanal } from '../utils/tempoReal'
+import { RespostaChamado } from '../components/RespostaChamado'
 import { getNomeComputador, getNomeDoSistema, salvarNomeComputador } from '../utils/gestorIdentidade'
 import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 import packageInfo from '../../package.json'
@@ -59,7 +60,8 @@ const CHAMADO_IGNORAR_TOQUE_MS = 500
 const lerRecadoChamado = (recado) => {
   const texto = (recado || '').trim()
   if (!texto.startsWith(PREFIXO_NEXBOT)) return { doNexBot: false, recado: recado || null }
-  return { doNexBot: true, recado: texto.slice(PREFIXO_NEXBOT.length).trim() || null }
+  const semPrefixo = texto.slice(PREFIXO_NEXBOT.length).trim()
+  return { doNexBot: true, recado: semPrefixo ? semPrefixo[0].toUpperCase() + semPrefixo.slice(1) : null }
 }
 const ORDER_REFRESH_SECONDS = 10
 // Com o canal de avisos ligado, pedido novo chega em segundos e a consulta vira só a reserva
@@ -876,6 +878,15 @@ export default function OrderManager() {
   const chamadoMostradoEmRef = useRef(0)
   useEffect(() => { chamadoMostradoEmRef.current = Date.now() }, [chamado?.id])
   const [chamadoVendoPedidoId, setChamadoVendoPedidoId] = useState(null)
+  // Quem começa a responder não precisa do alarme tocando enquanto escreve
+  const [chamadoMudoId, setChamadoMudoId] = useState(null)
+  // Avisos do NexBot ainda abertos, presos ao cartão do pedido (vivem no servidor: sobrevivem a reinício
+  // e aparecem em todos os computadores). Não é campo do pedido.
+  const [avisos, setAvisos] = useState([])
+  const avisosRef = useRef([])
+  useEffect(() => { avisosRef.current = avisos }, [avisos])
+  const [avisoSaidaTarget, setAvisoSaidaTarget] = useState(null)
+  const [sinalNexBot, setSinalNexBot] = useState(0)
   const [nomeComputador, setNomeComputador] = useState(getNomeComputador)
   const ultimaBuscaPedidosRef = useRef(0)
   const [servidorReserva, setServidorReserva] = useState(usandoServidorReserva)
@@ -937,7 +948,7 @@ export default function OrderManager() {
   const mobileSearchRef = useRef(null)
 
   const navigate = useNavigate()
-  const nexBotStatus = useNexBotStatus()
+  const nexBotStatus = useNexBotStatus({ canalLigado, sinal: sinalNexBot })
   const restaurantConfig = useRestaurantConfig()
   const { isOnline, wasOffline } = useOnlineStatus()
   const accountInfo = useMemo(() => {
@@ -1660,6 +1671,7 @@ const handlePrintBagLabels = useCallback(
             numero: pedido?.numeroPedido || null,
             pedidoId: comando.pedido || null,
             pedido,
+            em: Date.now(),
             ...lerRecadoChamado(comando.recado),
           }
           setChamados((fila) => [...fila, novoChamado])
@@ -1715,7 +1727,7 @@ const handlePrintBagLabels = useCallback(
   // novo para não confundir. Toca até alguém responder, mesmo com o som de pedido desligado.
   // Gerado pelo Web Audio, sem arquivo; se o áudio estiver bloqueado, usa o som de pedido como reserva.
   useEffect(() => {
-    if (!chamado) return
+    if (!chamado || chamadoMudoId === chamado.id) return
     let contexto = null
     try {
       contexto = new (window.AudioContext || window.webkitAudioContext)()
@@ -1754,17 +1766,71 @@ const handlePrintBagLabels = useCallback(
       clearInterval(id)
       contexto?.close().catch(() => {})
     }
-  }, [chamado])
+  }, [chamado, chamadoMudoId])
 
   const responderChamado = useCallback(async (resultado = 'visto') => {
     const atual = chamado
     if (!atual || Date.now() - chamadoMostradoEmRef.current < CHAMADO_IGNORAR_TOQUE_MS) return
     setChamados((fila) => fila.filter((item) => item.id !== atual.id))
+    // Alarme do NexBot sobre um pedido: "Vi" só cala o alarme; o aviso fica no cartão até alguém resolver
+    if (atual.doNexBot && atual.pedidoId) {
+      const visto = await apiFetch(`${API_PRINCIPAL}/api/gestor/comandos/${atual.id}/visto`, {
+        method: 'POST',
+        body: JSON.stringify({ resultado }),
+      }).catch(() => null)
+      if (visto?.ok) return
+      // servidor sem a rota nova: conclui como antes
+    }
     await apiFetch(`${API_PRINCIPAL}/api/gestor/comandos/${atual.id}/concluir`, {
       method: 'POST',
       body: JSON.stringify({ ok: true, resultado }),
     }).catch(() => {})
   }, [chamado])
+
+  const buscarAvisos = useCallback(async () => {
+    try {
+      const inicio = Date.now()
+      const res = await apiFetch(`${API_PRINCIPAL}/api/gestor/avisos`)
+      if (!res.ok) return
+      const lista = await res.json()
+      // Aviso fechado fora daqui (a equipe respondeu pelo WhatsApp ou outro computador resolveu):
+      // o alarme dele, se ainda estiver tocando, sai da fila. Só vale para alarme anterior a esta busca.
+      const abertos = new Set(lista.map((a) => a._id))
+      setChamados((fila) => {
+        const resto = fila.filter((c) => !(c.doNexBot && c.pedidoId && c.em < inicio && !abertos.has(c.id)))
+        return resto.length === fila.length ? fila : resto
+      })
+      const novos = lista.map((a) => ({ id: a._id, pedidoId: String(a.pedido), ...lerRecadoChamado(a.recado) }))
+      // Quase sempre nada mudou: não refaz o quadro à toa
+      setAvisos((atuais) => (JSON.stringify(atuais) === JSON.stringify(novos) ? atuais : novos))
+    } catch { /* fica com os últimos conhecidos */ }
+  }, [])
+
+  // Com `mensagem`, ela vai ao cliente pelo WhatsApp da loja e o aviso fecha; sem, só fecha ("Resolvido").
+  // Se o NexBot não enviar, o aviso continua aberto e o caixa responde pelo WhatsApp, como sempre.
+  const resolverAviso = useCallback(async (avisoId, mensagem = null) => {
+    try {
+      const res = await apiFetch(`${API_PRINCIPAL}/api/gestor/avisos/${avisoId}/resolver`, {
+        method: 'POST',
+        body: JSON.stringify(mensagem ? { mensagem } : {}),
+      })
+      // 409: outro computador já resolveu
+      if (!res.ok && res.status !== 409) {
+        const erro = await getApiErrorMessage(res, 'Não foi enviado. Responda pelo WhatsApp da loja.')
+        if (!mensagem) addToast(erro, 'error')
+        return { ok: false, erro }
+      }
+      setAvisos((lista) => lista.filter((a) => a.id !== avisoId))
+      setChamados((fila) => fila.filter((item) => item.id !== avisoId))
+      if (res.ok) addToast(mensagem ? 'Resposta enviada ao cliente pelo WhatsApp.' : 'Aviso resolvido.', 'success')
+      buscarAvisos()
+      return { ok: true }
+    } catch {
+      const erro = mensagem ? 'Não foi enviado. Responda pelo WhatsApp da loja.' : 'Não foi possível resolver o aviso. Confira a conexão.'
+      if (!mensagem) addToast(erro, 'error')
+      return { ok: false, erro }
+    }
+  }, [addToast, buscarAvisos])
 
   const buscarPapel = useCallback(async () => {
     try {
@@ -1793,6 +1859,7 @@ const handlePrintBagLabels = useCallback(
         if (!ligado) return
         fetchPedidosRef.current()
         cumprirComandos()
+        buscarAvisos()
         buscarPapel()
         buscarLojaRef.current?.() // a loja pode ter mudado enquanto o canal estava fora
       },
@@ -1804,14 +1871,22 @@ const handlePrintBagLabels = useCallback(
           buscarLojaRef.current?.()
         } else if (tipo === 'comando') {
           cumprirComandos()
+          buscarAvisos()
+        } else if (tipo === 'resposta') {
+          buscarAvisos() // outro computador respondeu ou resolveu um aviso
         } else if (tipo === 'gestor') {
           buscarPapel()
+        } else if (tipo === 'nexbot') {
+          setSinalNexBot((n) => n + 1) // o WhatsApp da loja caiu ou voltou
         }
       },
     })
-    // Sem o canal, a ordem do celular ainda chega, só que em até 30 s
+    buscarAvisos() // vale também para quem só acompanha e quando o canal não abre
+    // Sem o canal, a ordem do celular e os avisos ainda chegam, só que em até 30 s
     const reserva = setInterval(() => {
-      if (!canalLigadoRef.current) cumprirComandos()
+      if (canalLigadoRef.current) return
+      cumprirComandos()
+      buscarAvisos()
     }, ORDER_REFRESH_COM_CANAL_MS)
     return () => {
       parar()
@@ -1819,7 +1894,7 @@ const handlePrintBagLabels = useCallback(
       clearInterval(reserva)
       canalLigadoRef.current = false
     }
-  }, [cumprirComandos, buscarPapel])
+  }, [cumprirComandos, buscarPapel, buscarAvisos])
 
   // ── advanceStatus com atualização otimista ────────────────────────────────
   //
@@ -1829,9 +1904,19 @@ const handlePrintBagLabels = useCallback(
   // 4. Em caso de sucesso, confirma com dados frescos do servidor
   // ──────────────────────────────────────────────────────────────────────────
   const advanceStatus = useCallback(
-    async (pedido) => {
+    async (pedido, { avisoConferido = false } = {}) => {
       const nextStatus = getNextStatus(pedido.status)
       if (!nextStatus) return { success: false, deferred: false }
+
+      // Aviso do NexBot aberto ("quer mudar o endereço"): confirma antes de o pedido sair
+      if (
+        nextStatus === 'Saiu para entrega' &&
+        !avisoConferido &&
+        avisosRef.current.some((a) => a.pedidoId === pedido._id)
+      ) {
+        setAvisoSaidaTarget(pedido)
+        return { success: false, deferred: true }
+      }
 
       // ✅ Intercepta ANTES de qualquer chamada — modal gerencia o avanço
       if (
@@ -1959,6 +2044,16 @@ const handlePrintBagLabels = useCallback(
   }, [])
 
   // ── Derivações memoizadas dos pedidos ─────────────────────────────────────
+  const avisosPorPedido = useMemo(() => {
+    const mapa = new Map()
+    // O cliente pode insistir no mesmo assunto: vira um aviso só (resolver fecha os iguais no servidor)
+    avisos.forEach((a) => {
+      const doPedido = mapa.get(a.pedidoId) || []
+      if (!doPedido.some((outro) => outro.recado === a.recado)) mapa.set(a.pedidoId, [...doPedido, a])
+    })
+    return mapa
+  }, [avisos])
+
   const activeOrders = useMemo(
     () =>
       pedidos.filter(
@@ -2066,8 +2161,20 @@ const handlePrintBagLabels = useCallback(
       const clusterOrders = pedidosComClusters.filter(
         (p) => p.clusterId === clusterId
       )
+      // No avanço em grupo, pedido com aviso aberto não sai junto: fica para alguém conferir
+      const comAviso = clusterOrders.filter(
+        (p) => getNextStatus(p.status) === 'Saiu para entrega' && avisosRef.current.some((a) => a.pedidoId === p._id)
+      )
       for (const pedido of clusterOrders) {
+        if (comAviso.includes(pedido)) continue
         await advanceStatus(pedido)
+      }
+      if (comAviso.length) {
+        addToast(
+          `${comAviso.map((p) => `#${getOrderNumber(p)}`).join(', ')} não saiu: tem aviso do cliente aberto. Confira o pedido.`,
+          'warning',
+          15000
+        )
       }
       if (!canalLigadoRef.current) await fetchPedidos()
       const stillActive = pedidosComClusters.some(
@@ -2080,7 +2187,7 @@ const handlePrintBagLabels = useCallback(
         setVisibleClusters((prev) => prev.filter((id) => id !== clusterId))
       }
     },
-    [pedidosComClusters, advanceStatus, fetchPedidos]
+    [pedidosComClusters, advanceStatus, fetchPedidos, addToast]
   )
 
   const toggleClusterPin = useCallback((clusterId) => {
@@ -2225,6 +2332,8 @@ const handlePrintBagLabels = useCallback(
     ? pedidosComClusters.find((p) => p._id === chamado.pedidoId) || chamado.pedido
     : null
   const chamadoRecolhido = Boolean(chamado && selectedOrder && chamadoVendoPedidoId === chamado.id)
+  // Alarme do NexBot sobre um pedido: dá para responder ao cliente daqui e o aviso fica preso ao cartão
+  const chamadoComAviso = Boolean(chamado?.doNexBot && chamado.pedidoId)
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
@@ -2593,6 +2702,7 @@ const handlePrintBagLabels = useCallback(
                       onClick={() => setSelectedOrder(p)}
                       onAdvance={() => advanceStatus(p)}
                       onPrint={() => handlePrint(p)}
+                      avisos={avisosPorPedido.get(p._id)}
                       printStatus={getVisiblePrintStatus(p._id)}
                       color="purple"
                       isLoading={loadingOrderId === p._id}
@@ -2620,6 +2730,7 @@ const handlePrintBagLabels = useCallback(
                     onClick={() => setSelectedOrder(p)}
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
+                    avisos={avisosPorPedido.get(p._id)}
                     printStatus={getVisiblePrintStatus(p._id)}
                     color="orange"
                     isLoading={loadingOrderId === p._id}
@@ -2648,6 +2759,7 @@ const handlePrintBagLabels = useCallback(
                     onClick={() => setSelectedOrder(p)}
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
+                    avisos={avisosPorPedido.get(p._id)}
                     printStatus={getVisiblePrintStatus(p._id)}
                     color="blue"
                     isLoading={loadingOrderId === p._id}
@@ -3143,6 +3255,26 @@ const handlePrintBagLabels = useCallback(
             pedidos={pedidosComClusters}
             onNavigate={setSelectedOrder}
             restaurantAddress={settings.enderecoRestaurante}
+            avisosPorPedido={avisosPorPedido}
+            onResolverAviso={resolverAviso}
+            onComecarResposta={(avisoId) => setChamadoMudoId(avisoId)}
+          />
+        )}
+
+        {avisoSaidaTarget && (
+          <AvisoSaidaModal
+            pedido={avisoSaidaTarget}
+            avisos={avisosPorPedido.get(avisoSaidaTarget._id) || []}
+            onVerPedido={() => {
+              setSelectedOrder(avisoSaidaTarget)
+              setAvisoSaidaTarget(null)
+            }}
+            onSair={() => {
+              const pedido = avisoSaidaTarget
+              setAvisoSaidaTarget(null)
+              advanceStatus(pedido, { avisoConferido: true })
+            }}
+            onClose={() => setAvisoSaidaTarget(null)}
           />
         )}
 
@@ -3196,7 +3328,7 @@ const handlePrintBagLabels = useCallback(
               onClick={() => responderChamado('visto')}
               className="shrink-0 rounded-lg bg-white px-3 py-2 text-sm font-bold text-violet-900 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-300"
             >
-              Vi, vou responder
+              {chamadoComAviso ? 'Vi, calar o alarme' : 'Vi, vou responder'}
             </button>
             <button
               type="button"
@@ -3216,7 +3348,7 @@ const handlePrintBagLabels = useCallback(
             aria-modal="true"
             aria-labelledby="chamado-titulo"
           >
-            <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-2xl">
+            <div className="max-h-full w-full max-w-md overflow-y-auto rounded-2xl bg-white p-8 text-center shadow-2xl">
               <span className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-100 text-violet-700">
                 <i className="fas fa-bell fa-shake text-3xl" aria-hidden="true" />
               </span>
@@ -3233,13 +3365,25 @@ const handlePrintBagLabels = useCallback(
                     : chamado.recado ? 'Responda para o dono saber que você viu.' : 'Confira os pedidos, por favor.'}
                 </p>
               )}
+              {chamadoComAviso && (
+                <div className="mt-4">
+                  <RespostaChamado
+                    recado={chamado.recado}
+                    numero={chamado.numero}
+                    onEnviar={(mensagem) => resolverAviso(chamado.id, mensagem)}
+                    onComecar={() => setChamadoMudoId(chamado.id)}
+                  />
+                </div>
+              )}
               <button
                 type="button"
                 autoFocus
                 onClick={() => responderChamado('visto')}
-                className="mt-6 w-full rounded-xl bg-violet-600 px-6 py-4 text-lg font-bold text-white hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300"
+                className={`w-full rounded-xl bg-violet-600 px-6 font-bold text-white hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300 ${
+                  chamadoComAviso ? 'mt-3 py-3 text-base' : 'mt-6 py-4 text-lg'
+                }`}
               >
-                {chamado.doNexBot ? 'Vi, vou responder' : 'Vi, já estou vendo'}
+                {chamadoComAviso ? 'Vi, vou resolver depois' : chamado.doNexBot ? 'Vi, vou responder' : 'Vi, já estou vendo'}
               </button>
               {chamado.doNexBot && pedidoDoChamado && (
                 <button
@@ -3261,7 +3405,9 @@ const handlePrintBagLabels = useCallback(
                 Agora não posso
               </button>
               <p className="mt-3 text-xs text-gray-400">
-                {chamado.doNexBot ? 'Responda o cliente no WhatsApp da loja' : 'O dono recebe a confirmação no celular.'}
+                {chamadoComAviso
+                  ? 'O aviso fica no cartão do pedido até alguém responder ou marcar como resolvido.'
+                  : chamado.doNexBot ? 'Responda o cliente no WhatsApp da loja' : 'O dono recebe a confirmação no celular.'}
               </p>
             </div>
           </div>
@@ -3556,6 +3702,7 @@ function OrderCard({
   searchQuery,
   visibleClusters,
   toggleClusterPin,
+  avisos,
 }) {
   const colorThemes = {
     purple: 'border-l-4 border-l-[#7f22fe]',
@@ -3641,6 +3788,18 @@ function OrderCard({
           {formatCurrency(pedido.total)}
         </span>
       </div>
+
+      {/* Aviso do NexBot aberto: fica no cartão até alguém responder ou resolver */}
+      {!isDone && avisos?.map((aviso) => (
+        <p
+          key={aviso.id}
+          className="flex items-center gap-1.5 rounded-md bg-violet-700 px-2 py-1 text-[11px] font-bold text-white"
+          title="Aviso do cliente pelo WhatsApp. Abra o pedido para responder ou resolver."
+        >
+          <i className="fas fa-bell text-[10px]" aria-hidden="true"></i>
+          <span className="truncate">{aviso.recado || 'Cliente precisa de atendimento'}</span>
+        </p>
+      ))}
 
       {/* Linha 2: Nome do cliente */}
       <div className="flex items-center gap-1.5">
@@ -3929,8 +4088,14 @@ function OrderModal({
   pedidos,
   onNavigate,
   restaurantAddress,
+  avisosPorPedido,
+  onResolverAviso,
+  onComecarResposta,
 }) {
   const [currentPedido, setCurrentPedido] = useState(pedido)
+  const avisosDoPedido = ['Entregue', 'Cancelado'].includes(currentPedido.status)
+    ? []
+    : avisosPorPedido?.get(currentPedido._id) || []
   const discountInfo = getDiscountInfo(currentPedido)
   const orderAction = getOrderAction(currentPedido)
   const printInfo = getPrintStatusInfo(printStatus)
@@ -4098,6 +4263,33 @@ function OrderModal({
               <i className="fas fa-times" aria-hidden="true"></i>
             </button>
           </div>
+
+          {/* Avisos do NexBot abertos neste pedido */}
+          {avisosDoPedido.map((aviso) => (
+            <div key={aviso.id} className="mt-3 rounded-xl border border-violet-300 bg-violet-50 p-3">
+              <div className="mb-3 flex items-center gap-3">
+                <i className="fas fa-bell text-violet-700" aria-hidden="true"></i>
+                <p className="min-w-0 flex-1 text-sm font-bold text-violet-900">
+                  Pelo WhatsApp: {aviso.recado || 'cliente precisa de atendimento'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onResolverAviso(aviso.id)}
+                  className="shrink-0 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-bold text-violet-800 hover:bg-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                  title="Fecha o aviso sem mandar mensagem ao cliente"
+                >
+                  <i className="fas fa-check mr-1.5" aria-hidden="true"></i>
+                  Resolvido
+                </button>
+              </div>
+              <RespostaChamado
+                recado={aviso.recado}
+                numero={getOrderNumber(currentPedido)}
+                onEnviar={(mensagem) => onResolverAviso(aviso.id, mensagem)}
+                onComecar={() => onComecarResposta?.(aviso.id)}
+              />
+            </div>
+          ))}
 
           {/* Navegação prev/next intra-cluster */}
           {currentPedido.clusterId && clusterOrders.length > 1 && (
@@ -4749,6 +4941,51 @@ function AccordionSection({ id, icon, title, defaultOpen = false, children }) {
           {children}
         </div>
       )}
+    </div>
+  )
+}
+
+// Pedido com aviso do cliente aberto prestes a sair: confirma, não bloqueia
+function AvisoSaidaModal({ pedido, avisos, onVerPedido, onSair, onClose }) {
+  const modalRef = useFocusTrap(true, onClose)
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
+      <div
+        ref={modalRef}
+        className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="aviso-saida-titulo"
+      >
+        <h2 id="aviso-saida-titulo" className="flex items-center gap-2 text-lg font-bold text-gray-900">
+          <i className="fas fa-bell text-violet-700" aria-hidden="true"></i>
+          Pedido #{getOrderNumber(pedido)} tem aviso do cliente
+        </h2>
+        <ul className="mt-3 space-y-2">
+          {avisos.map((aviso) => (
+            <li key={aviso.id} className="rounded-lg bg-violet-50 px-3 py-2 text-sm font-bold text-violet-900">
+              {aviso.recado || 'Cliente precisa de atendimento'}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 text-sm text-gray-600">Ninguém respondeu nem marcou como resolvido. Quer conferir antes de o pedido sair?</p>
+        <button
+          type="button"
+          autoFocus
+          onClick={onVerPedido}
+          className="mt-5 w-full rounded-xl bg-violet-600 px-4 py-3 font-bold text-white hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300"
+        >
+          Ver pedido
+        </button>
+        <button
+          type="button"
+          onClick={onSair}
+          className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-4 focus:ring-gray-200"
+        >
+          Sair assim mesmo
+        </button>
+      </div>
     </div>
   )
 }
