@@ -891,10 +891,6 @@ export default function OrderManager() {
   const [nomeComputador, setNomeComputador] = useState(getNomeComputador)
   const ultimaBuscaPedidosRef = useRef(0)
   const [servidorReserva, setServidorReserva] = useState(usandoServidorReserva)
-  const [updateState, setUpdateState] = useState({
-    status: 'idle',
-    progress: 0,
-  })
 
   // ── Busca ─────────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
@@ -1154,25 +1150,6 @@ useEffect(() => {
     if (!electronAPI.isElectron()) return
     electronAPI.setPowerBlocker(true)
     return () => { electronAPI.setPowerBlocker(false) }
-  }, [])
-
-  useEffect(() => {
-    if (!electronAPI.isElectron()) return
-
-    electronAPI.onUpdateAvailable(() => {
-      setUpdateState({ status: 'downloading', progress: 0 })
-    })
-    electronAPI.onUpdateDownloadProgress((progress) => {
-      setUpdateState({
-        status: 'downloading',
-        progress: Math.round(progress?.percent || 0),
-      })
-    })
-    electronAPI.onUpdateDownloaded(() => {
-      setUpdateState({ status: 'ready', progress: 100 })
-    })
-
-    return () => electronAPI.offUpdaterEvents()
   }, [])
 
   useEffect(() => {
@@ -1993,10 +1970,6 @@ const handlePrintBagLabels = useCallback(
     navigate('/login')
   }, [navigate])
 
-  const handleInstallUpdate = useCallback(() => {
-    electronAPI.installUpdate()
-  }, [])
-
   // ── Derivações memoizadas dos pedidos ─────────────────────────────────────
   const avisosPorPedido = useMemo(() => {
     const mapa = new Map()
@@ -2644,7 +2617,6 @@ const handlePrintBagLabels = useCallback(
                       onAdvance={() => advanceStatus(p)}
                       onPrint={() => handlePrint(p)}
                       avisos={avisosPorPedido.get(p._id)}
-                      codigoEntregador={settings.appEntregador}
                       printStatus={getVisiblePrintStatus(p._id)}
                       color="purple"
                       isLoading={loadingOrderId === p._id}
@@ -2673,7 +2645,6 @@ const handlePrintBagLabels = useCallback(
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
                     avisos={avisosPorPedido.get(p._id)}
-                    codigoEntregador={settings.appEntregador}
                     printStatus={getVisiblePrintStatus(p._id)}
                     color="orange"
                     isLoading={loadingOrderId === p._id}
@@ -2703,7 +2674,6 @@ const handlePrintBagLabels = useCallback(
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
                     avisos={avisosPorPedido.get(p._id)}
-                    codigoEntregador={settings.appEntregador}
                     printStatus={getVisiblePrintStatus(p._id)}
                     color="blue"
                     isLoading={loadingOrderId === p._id}
@@ -2903,53 +2873,6 @@ const handlePrintBagLabels = useCallback(
                       ariaLabel="Ativar etiquetas de sacola"
                     />
                   </div>
-                </div>
-              </div>
-            </AccordionSection>
-
-            {/* ── Sistema ───────────────────────────────────────────────── */}
-            <AccordionSection id="acc-sistema" icon="sliders-h" title="Sistema">
-              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">Sincronização de pedidos</p>
-                    <p className="text-xs text-gray-500 mt-1">Pedidos atualizados automaticamente a cada 10 segundos</p>
-                  </div>
-                  <span className="text-sm font-bold text-[#7f22fe] bg-purple-50 px-3 py-1 rounded-full border border-purple-200">
-                    {ORDER_REFRESH_SECONDS}s
-                  </span>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">Atualização do gestor</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {updateState.status === 'ready'
-                        ? 'Nova versão baixada e pronta para instalar'
-                        : updateState.status === 'downloading'
-                        ? `Baixando atualização (${updateState.progress}%)`
-                        : `Versão atual v${packageInfo.version}`}
-                    </p>
-                  </div>
-                  {updateState.status === 'ready' ? (
-                    <button
-                      type="button"
-                      onClick={handleInstallUpdate}
-                      className="shrink-0 rounded-lg bg-[#7f22fe] px-3 py-2 text-xs font-bold text-white hover:bg-[#6b1de0]"
-                    >
-                      Atualizar
-                    </button>
-                  ) : (
-                    <span className={`shrink-0 text-xs font-bold px-3 py-1 rounded-full border ${
-                      updateState.status === 'downloading'
-                        ? 'bg-blue-50 text-blue-700 border-blue-200'
-                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    }`}>
-                      {updateState.status === 'downloading' ? 'Baixando' : 'Em dia'}
-                    </span>
-                  )}
                 </div>
               </div>
             </AccordionSection>
@@ -3202,6 +3125,7 @@ const handlePrintBagLabels = useCallback(
             avisosPorPedido={avisosPorPedido}
             onResolverAviso={resolverAviso}
             onComecarResposta={(avisoId) => setChamadoMudoId(avisoId)}
+            codigoEntregador={settings.appEntregador}
           />
         )}
 
@@ -3627,7 +3551,6 @@ function OrderCard({
   visibleClusters,
   toggleClusterPin,
   avisos,
-  codigoEntregador = false,
 }) {
   const colorThemes = {
     purple: 'border-l-4 border-l-[#7f22fe]',
@@ -3875,15 +3798,6 @@ function OrderCard({
         </div>
       )}
 
-      {/* Código que o motoboy digita no app (também sai na comanda) */}
-      {codigoEntregador && isDelivery(pedido) && pedido.status === 'Em preparação' && !pedido.entregadorNome && (
-        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-gray-50 border border-gray-200" title="O motoboy digita este código no app do entregador">
-          <i className="fas fa-motorcycle text-gray-500 text-[9px]" aria-hidden="true"></i>
-          <span className="text-[10px] font-bold text-gray-600">Código do entregador</span>
-          <span className="ml-auto text-[12px] font-black tracking-widest text-gray-900">{codigoEntrega(pedido._id)}</span>
-        </div>
-      )}
-
       {/* Badge motoboy atribuído */}
       {pedido.motoboyAtribuido && (
         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-50 border border-purple-200">
@@ -4024,6 +3938,7 @@ function OrderModal({
   avisosPorPedido,
   onResolverAviso,
   onComecarResposta,
+  codigoEntregador = false,
 }) {
   const [currentPedido, setCurrentPedido] = useState(pedido)
   const avisosDoPedido = ['Entregue', 'Cancelado'].includes(currentPedido.status)
@@ -4196,6 +4111,18 @@ function OrderModal({
               <i className="fas fa-times" aria-hidden="true"></i>
             </button>
           </div>
+
+          {/* Código do entregador: sai na comanda; aqui é a reserva se a impressão falhar */}
+          {codigoEntregador && isDelivery(currentPedido) && ['Recebido', 'Em preparação', 'Saiu para entrega'].includes(currentPedido.status) && !currentPedido.entregadorNome && (
+            <div className="mt-3 flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5">
+              <i className="fas fa-motorcycle text-gray-500" aria-hidden="true"></i>
+              <p className="min-w-0 flex-1 text-sm text-gray-600">
+                <span className="font-bold text-gray-800">Código do entregador</span>
+                <span className="block text-xs">Está na comanda. Passe ao motoboy se ela não saiu.</span>
+              </p>
+              <span className="text-2xl font-black tracking-[0.2em] text-gray-900">{codigoEntrega(currentPedido._id)}</span>
+            </div>
+          )}
 
           {/* Avisos do NexBot abertos neste pedido */}
           {avisosDoPedido.map((aviso) => (
