@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { useNavigate } from 'react-router-dom'
 import electronAPI from '@utils/electronBridge'
+import { prazoEntregaDaLoja, prazoDoPedido, situacaoDoPrazo } from '@utils/prazoPedido'
 import { useOrderClustering } from '@hooks/useOrderClustering'
 import { ClusterFloatingCard } from '../components/ClusterFloatingCard'
 import { useNexBotStatus } from '@hooks/useNexBotStatus'
@@ -395,51 +396,44 @@ function TempoDesde({ desde, emMinutos = false }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TICK CONTEXT — timer global único para todos os countdowns
+// RELÓGIO DOS CARTÕES — um só para o quadro, na virada do minuto
 //
-// Problema anterior: cada OrderCard rodava seu próprio setInterval(1s).
-// Com 30 cards ativos = 30 timers simultâneos no thread principal.
-//
-// Solução: 1 único Context que bate a cada segundo. Cada card apenas lê
-// o valor — zero timers próprios. Redução de ~96% nos intervalos ativos.
+// O prazo aparece em minutos ("faltam 12 min"), então nada muda entre um minuto e outro: o relógio
+// bate 1 vez por minuto (antes 1 vez por segundo, refazendo todos os cartões para trocar os segundos).
+// O prazo da entrega é o que a loja promete ao cliente (Minha Loja), não um número fixo.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TickContext = createContext(Date.now())
+const PrazoEntregaContext = createContext(null)
+const useTick = () => useContext(TickContext)
 
-function TickProvider({ children }) {
+function TickProvider({ prazoEntrega = null, children }) {
   const [tick, setTick] = useState(Date.now())
 
   useEffect(() => {
-    const id = setInterval(() => setTick(Date.now()), 1000)
-    return () => clearInterval(id)
+    let id = null
+    const agendar = () => {
+      id = setTimeout(() => { setTick(Date.now()); agendar() }, 60000 - (Date.now() % 60000) + 50)
+    }
+    agendar()
+    return () => clearTimeout(id)
   }, [])
 
-  return <TickContext.Provider value={tick}>{children}</TickContext.Provider>
+  return (
+    <TickContext.Provider value={tick}>
+      <PrazoEntregaContext.Provider value={prazoEntrega}>{children}</PrazoEntregaContext.Provider>
+    </TickContext.Provider>
+  )
 }
 
-const useTick = () => useContext(TickContext)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HOOK: useCountdown
-// Calcula tempo restante a partir do tick global — sem setInterval próprio.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function useCountdown(createdAt, estimatedMinutes = 40) {
-  const now = useTick()
-  const elapsedSecs = Math.floor((now - new Date(createdAt)) / 1000)
-  const totalSecs = estimatedMinutes * 60
-  const remaining = Math.max(0, totalSecs - elapsedSecs)
-  const overdueSecs = remaining === 0 ? Math.max(0, elapsedSecs - totalSecs) : 0
-
-  const mins = String(Math.floor(remaining / 60)).padStart(2, '0')
-  const secs = String(remaining % 60).padStart(2, '0')
-
-  return {
-    display: `${mins}:${secs}`,
-    isLate: remaining === 0,
-    isWarning: remaining > 0 && remaining < 600, // menos de 10 min
-    overdueMinutes: Math.floor(overdueSecs / 60),
-  }
+// Prazo do pedido em minutos, lido do relógio único — sem timer próprio.
+// Pedido que chega no meio do minuto usa a hora de agora, não a última batida.
+function usePrazoDoPedido(pedido) {
+  const tick = useTick()
+  const prazoEntrega = useContext(PrazoEntregaContext)
+  const prazo = prazoDoPedido(pedido, prazoEntrega)
+  const criadoEm = new Date(pedido.createdAt).getTime()
+  return { prazo, ...situacaoDoPrazo(criadoEm, prazo, Math.max(tick, criadoEm)) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -864,6 +858,7 @@ export default function OrderManager() {
 
   // ── Status da loja para o cliente (aberta/fechada/pausada) e servidor em uso ─
   const [lojaInfo, setLojaInfo] = useState(null) // { horarios, statusLoja }
+  const [prazoEntrega, setPrazoEntrega] = useState(null) // minutos que a loja promete na entrega
   const [statusLoja, setStatusLoja] = useState(null)
   const buscarLojaRef = useRef(null)
   const canalLigadoRef = useRef(false)
@@ -1095,7 +1090,9 @@ useEffect(() => {
         const res = await apiFetch(`${API_PRINCIPAL}/api/restaurante/profile`)
         if (!res.ok) return
         const data = await res.json()
-        if (ativo) setLojaInfo({ horarios: data.horariosFuncionamento || [], statusLoja: data.statusLoja || null })
+        if (!ativo) return
+        setLojaInfo({ horarios: data.horariosFuncionamento || [], statusLoja: data.statusLoja || null })
+        setPrazoEntrega(prazoEntregaDaLoja(data.tempoEntrega))
       } catch { /* mantém o último status conhecido */ }
     }
     buscarLojaRef.current = buscar
@@ -2225,11 +2222,10 @@ const handlePrintBagLabels = useCallback(
 
       return pedidosComClusters.filter((p) => {
         if (['Entregue', 'Cancelado'].includes(p.status)) return false
-        const estimatedMins = isDelivery(p) ? 40 : 15
-        return getTimeElapsed(p.createdAt, elapsedAt).minutes > estimatedMins
+        return situacaoDoPrazo(p.createdAt, prazoDoPedido(p, prazoEntrega), elapsedAt).atrasado
       })
     },
-    [pedidosComClusters, lastUpdated, agoraMinuto]
+    [pedidosComClusters, lastUpdated, agoraMinuto, prazoEntrega]
   )
 
   const operationalAlerts = useMemo(() => {
@@ -2337,7 +2333,7 @@ const handlePrintBagLabels = useCallback(
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <TickProvider>
+    <TickProvider prazoEntrega={prazoEntrega}>
       <div className="h-screen overflow-hidden bg-white text-gray-900 flex flex-col">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
@@ -3711,9 +3707,7 @@ function OrderCard({
     emerald: 'border-l-4 border-l-emerald-500 opacity-60 grayscale-[0.5]',
   }
 
-  const { minutes } = getTimeElapsed(pedido.createdAt)
-  const estimatedMins = isDelivery(pedido) ? 40 : 15
-  const countdown = useCountdown(pedido.createdAt, estimatedMins)
+  const prazo = usePrazoDoPedido(pedido)
   const discountInfo = getDiscountInfo(pedido)
   const orderAction = getOrderAction(pedido)
   const printInfo = getPrintStatusInfo(printStatus)
@@ -3721,11 +3715,10 @@ function OrderCard({
   const hasObservation = hasOrderObservation(pedido)
 
   // Monta o tooltip do countdown com contexto claro para o operador
-  const countdownTooltip = countdown.isLate
-    ? `Pedido atrasado! Feito há ${minutes} min — ${countdown.overdueMinutes} min além dos ${estimatedMins} estimados`
-    : countdown.isWarning
-    ? `Atenção: menos de 10 minutos restantes (${countdown.display})`
-    : `Tempo estimado restante: ${countdown.display}`
+  const prazoDe = isDelivery(pedido) ? `prazo de entrega de ${prazo.prazo} min` : `prazo de retirada de ${prazo.prazo} min`
+  const countdownTooltip = prazo.atrasado
+    ? `Pedido atrasado! Feito há ${prazo.passados} min, ${prazo.atraso > 0 ? `${prazo.atraso} min além do` : 'no limite do'} ${prazoDe}`
+    : `Faltam ${prazo.restam} min do ${prazoDe} (feito há ${prazo.passados} min)`
 
   // Highlight do termo buscado no texto do card
   const highlightText = (text) => {
@@ -3754,7 +3747,7 @@ function OrderCard({
       }}
       className={`relative bg-white p-3 rounded-lg shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all cursor-pointer border group flex flex-col gap-2 focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
         colorThemes[color]
-      } ${countdown.isLate && !isDone ? 'ring-1 ring-red-400/60' : ''}`}
+      } ${prazo.atrasado && !isDone ? 'ring-1 ring-red-400/60' : ''}`}
       role="button"
       tabIndex={0}
       aria-label={`Pedido #${getOrderNumber(pedido)} — ${pedido.cliente?.nome || 'Consumidor'} — ${pedido.status || 'Recebido'} — ${formatCurrency(pedido.total)}`}
@@ -3770,17 +3763,17 @@ function OrderCard({
 
         {!isDone && (
           <span
-            className={`text-[10px] font-black px-1.5 py-0.5 rounded font-mono shrink-0 cursor-help ${
-              countdown.isLate
+            className={`text-[10px] font-black px-1.5 py-0.5 rounded shrink-0 cursor-help whitespace-nowrap ${
+              prazo.atrasado
                 ? 'bg-red-100 text-red-600'
-                : countdown.isWarning
+                : prazo.atencao
                 ? 'bg-yellow-100 text-yellow-700'
                 : 'bg-gray-100 text-gray-500'
             }`}
             title={countdownTooltip}
             aria-label={countdownTooltip}
           >
-            {countdown.isLate ? `ATRASADO ${countdown.overdueMinutes}min` : countdown.display}
+            {prazo.atrasado ? (prazo.atraso > 0 ? `ATRASADO ${prazo.atraso} min` : 'ATRASADO') : `${prazo.restam} min`}
           </span>
         )}
 
