@@ -698,9 +698,8 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           .payment-box  { border: 2px solid #000; padding: 5px; margin-top: 8px; text-align: center; font-weight: var(--fw-heavy); font-size: var(--fs-lg); color: #000; }
           .footer       { margin-top: 8px; margin-bottom: 0; text-align: center; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; border-top: 2px dashed #000; padding-top: 6px; padding-bottom: 4px; }
           .footer-brand { font-size: var(--fs-xs); }
-          .codigo-entregador { border: 3px solid #000; text-align: center; padding: 4px 0 2px; margin-bottom: 8px; }
-          .codigo-rotulo { font-size: var(--fs-sm); font-weight: var(--fw-heavy); text-transform: uppercase; letter-spacing: 1px; }
-          .codigo-numero { font-size: 34px; font-weight: 900; letter-spacing: 8px; line-height: 1.1; }
+          .codigo-entregador { margin-top: 8px; text-align: center; font-size: var(--fs-sm); font-weight: var(--fw-mid); color: #000; }
+          .codigo-entregador b { font-size: var(--fs-lg); font-weight: var(--fw-heavy); letter-spacing: 2px; margin-left: 4px; }
           .fiel         { font-size: var(--fs-sm); font-weight: var(--fw-heavy); color: #000; margin-top: 2px; }
         </style>
       </head>
@@ -714,13 +713,6 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
             <span class="order-number">PEDIDO #${numeroPedidoHtml}</span>
           </div>
         </div>
-
-        ${codigoEntregador && isDelivery(pedido) ? `
-          <div class="codigo-entregador">
-            <div class="codigo-rotulo">Código do entregador</div>
-            <div class="codigo-numero">${codigoEntrega(pedido._id)}</div>
-          </div>
-        ` : ''}
 
         <div class="info-group">
           <div class="info-label">Cliente</div>
@@ -753,6 +745,8 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
         <div class="info-value">${formaPagamentoHtml}</div>
         ${Number(pedido.trocoPara) > 0 ? `<div class="info-sub">Paga com: ${formatCurrency(pedido.trocoPara)}</div>` : ''}
         ${getTrocoInfo(pedido).troco > 0 ? `<div class="info-value">Levar troco: ${formatCurrency(getTrocoInfo(pedido).troco)}</div>` : ''}
+
+        ${codigoEntregador && isDelivery(pedido) ? `<div class="codigo-entregador">Cód. entregador<b>${codigoEntrega(pedido._id)}</b></div>` : ''}
 
         <div class="footer">
           ${restauranteNomeHtml} • Obrigado pela preferência!<br/>
@@ -813,11 +807,12 @@ const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConf
   <div class="divider"></div>
   <div class="order-num">#${orderNumHtml}</div>
   <div class="bag-tag">SACOLA ${sacolaHtml} DE ${totalSacolasHtml}</div>
-  ${codigoEntregador && isDelivery(pedido) ? `<div class="label" style="text-align:center;margin-top:4px">Código do entregador</div><div class="order-num" style="font-size:36px;letter-spacing:6px">${codigoEntrega(pedido._id)}</div>` : ''}
+
   <div class="divider"></div>
   <div class="label">Cliente</div>
   <div class="client">${clienteNomeHtml}</div>
   ${enderecoHtml}
+  ${codigoEntregador && isDelivery(pedido) ? `<div style="margin-top:6px;text-align:center;font-size:10px;font-weight:700">Cód. entregador <b style="font-size:13px;letter-spacing:2px">${codigoEntrega(pedido._id)}</b></div>` : ''}
   <div class="footer">NexFood • NEX07</div>
 </body>
 </html>`
@@ -4102,6 +4097,17 @@ function OrderModal({
                 </span>
               </div>
             </div>
+            {/* Código do entregador: sai na comanda; aqui é a reserva se a impressão falhar */}
+            {codigoEntregador && isDelivery(currentPedido) && ['Recebido', 'Em preparação', 'Saiu para entrega'].includes(currentPedido.status) && !currentPedido.entregadorNome && (
+              <span
+                className="ml-auto mr-3 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-500"
+                title="Código que o motoboy digita no app. Já sai na comanda; passe a ele se a comanda não saiu."
+              >
+                <i className="fas fa-motorcycle" aria-hidden="true"></i>
+                Cód. entregador
+                <span className="text-base font-black tracking-widest text-gray-900">{codigoEntrega(currentPedido._id)}</span>
+              </span>
+            )}
             <button
               onClick={onClose}
               className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/40"
@@ -4111,18 +4117,6 @@ function OrderModal({
               <i className="fas fa-times" aria-hidden="true"></i>
             </button>
           </div>
-
-          {/* Código do entregador: sai na comanda; aqui é a reserva se a impressão falhar */}
-          {codigoEntregador && isDelivery(currentPedido) && ['Recebido', 'Em preparação', 'Saiu para entrega'].includes(currentPedido.status) && !currentPedido.entregadorNome && (
-            <div className="mt-3 flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5">
-              <i className="fas fa-motorcycle text-gray-500" aria-hidden="true"></i>
-              <p className="min-w-0 flex-1 text-sm text-gray-600">
-                <span className="font-bold text-gray-800">Código do entregador</span>
-                <span className="block text-xs">Está na comanda. Passe ao motoboy se ela não saiu.</span>
-              </p>
-              <span className="text-2xl font-black tracking-[0.2em] text-gray-900">{codigoEntrega(currentPedido._id)}</span>
-            </div>
-          )}
 
           {/* Avisos do NexBot abertos neste pedido */}
           {avisosDoPedido.map((aviso) => (
