@@ -1,3 +1,4 @@
+import { codigoEntrega } from '../utils/codigoEntrega'
 import {
   useState,
   useEffect,
@@ -570,7 +571,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
     cnpj: cnpjFormatado = '',
   } = restaurantConfig
 
-  const { fonteTamanho = 12, negritar = false } = printConfig
+  const { fonteTamanho = 12, negritar = false, codigoEntregador = false } = printConfig
   const discountInfo = getDiscountInfo(pedido)
   const restauranteNomeHtml = escapeHtml(nomeRestaurante)
   const restauranteEnderecoHtml = escapeHtml(enderecoRestaurante)
@@ -697,6 +698,9 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
           .payment-box  { border: 2px solid #000; padding: 5px; margin-top: 8px; text-align: center; font-weight: var(--fw-heavy); font-size: var(--fs-lg); color: #000; }
           .footer       { margin-top: 8px; margin-bottom: 0; text-align: center; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: #000; border-top: 2px dashed #000; padding-top: 6px; padding-bottom: 4px; }
           .footer-brand { font-size: var(--fs-xs); }
+          .codigo-entregador { border: 3px solid #000; text-align: center; padding: 4px 0 2px; margin-bottom: 8px; }
+          .codigo-rotulo { font-size: var(--fs-sm); font-weight: var(--fw-heavy); text-transform: uppercase; letter-spacing: 1px; }
+          .codigo-numero { font-size: 34px; font-weight: 900; letter-spacing: 8px; line-height: 1.1; }
           .fiel         { font-size: var(--fs-sm); font-weight: var(--fw-heavy); color: #000; margin-top: 2px; }
         </style>
       </head>
@@ -710,6 +714,13 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
             <span class="order-number">PEDIDO #${numeroPedidoHtml}</span>
           </div>
         </div>
+
+        ${codigoEntregador && isDelivery(pedido) ? `
+          <div class="codigo-entregador">
+            <div class="codigo-rotulo">Código do entregador</div>
+            <div class="codigo-numero">${codigoEntrega(pedido._id)}</div>
+          </div>
+        ` : ''}
 
         <div class="info-group">
           <div class="info-label">Cliente</div>
@@ -759,7 +770,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
 // ETIQUETA DE SACOLA — cupom minimalista com número do pedido em destaque
 // ─────────────────────────────────────────────────────────────────────────────
 
-const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConfig = {}) => {
+const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConfig = {}, codigoEntregador = false) => {
   const { nome: nomeRestaurante = 'Restaurante' } = restaurantConfig
   const restauranteNomeHtml = escapeHtml(nomeRestaurante)
   const orderNumHtml = escapeHtml(getOrderNumber(pedido))
@@ -802,6 +813,7 @@ const renderEtiquetaSacolaToHTML = (pedido, sacola, totalSacolas, restaurantConf
   <div class="divider"></div>
   <div class="order-num">#${orderNumHtml}</div>
   <div class="bag-tag">SACOLA ${sacolaHtml} DE ${totalSacolasHtml}</div>
+  ${codigoEntregador && isDelivery(pedido) ? `<div class="label" style="text-align:center;margin-top:4px">Código do entregador</div><div class="order-num" style="font-size:36px;letter-spacing:6px">${codigoEntrega(pedido._id)}</div>` : ''}
   <div class="divider"></div>
   <div class="label">Cliente</div>
   <div class="client">${clienteNomeHtml}</div>
@@ -835,7 +847,6 @@ export default function OrderManager() {
   const [showFaturamento, setShowFaturamento] = useState(
     localStorage.getItem('showFaturamento') !== 'false'
   )
-  const [motoboyModalTarget, setMotoboyModalTarget] = useState(null)
   const [showSlugModal, setShowSlugModal] = useState(false)
   const [printFailure, setPrintFailure] = useState(null)
   const printFailureRef = useRef(null)
@@ -843,11 +854,6 @@ export default function OrderManager() {
   const [printStatuses, setPrintStatuses] = useState(readPrintStatuses)
   const [printingOrderIds, setPrintingOrderIds] = useState(() => new Set())
   const printingOrderIdsRef = useRef(new Set())
-  const [motoboyAvailability, setMotoboyAvailability] = useState({
-    checked: false,
-    count: 0,
-    error: null,
-  })
 
   // ── Estado do indicador "Atualizado há Xs" ────────────────────────────────
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -1022,46 +1028,6 @@ useEffect(() => {
     settingsRef.current = settings
   }, [settings])
 
-  useEffect(() => {
-    if (!settings.appEntregador) {
-      setMotoboyAvailability({ checked: false, count: 0, error: null })
-      return
-    }
-
-    const slug = localStorage.getItem('restauranteSlug') || ''
-    if (!slug) {
-      setMotoboyAvailability({ checked: true, count: 0, error: 'Slug do restaurante não configurado.' })
-      return
-    }
-
-    let cancelled = false
-
-    const fetchMotoboys = async () => {
-      try {
-        const res = await apiFetch(`https://api.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
-        if (!res.ok) throw new Error('Falha ao consultar motoboys.')
-        const data = await res.json()
-        const count = data.ativos?.filter((m) => m.status === 'disponivel').length || 0
-        if (!cancelled) setMotoboyAvailability({ checked: true, count, error: null })
-      } catch (err) {
-        if (!cancelled) {
-          setMotoboyAvailability({
-            checked: true,
-            count: 0,
-            error: err?.message || 'Falha ao consultar motoboys.',
-          })
-        }
-      }
-    }
-
-    fetchMotoboys()
-    const interval = setInterval(fetchMotoboys, 30000)
-
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [settings.appEntregador])
 
   // ── "Sem atualizar há N min": um agendamento só, 60 s depois da última atualização ──────────
   // (antes um relógio de 1 s refazia o quadro inteiro o dia todo para mudar este número)
@@ -1336,6 +1302,7 @@ useEffect(() => {
         const html = renderPedidoToHTML(pedido, restaurantConfig, {
           fonteTamanho: settingsRef.current.fonteTamanho,
           negritar: settingsRef.current.negritar,
+          codigoEntregador: settingsRef.current.appEntregador,
         })
 
         if (usesElectronPrinter) {
@@ -1407,7 +1374,7 @@ const handlePrintBagLabels = useCallback(
   async (pedido, totalSacolas) => {
     let etiquetasEnviadas = 0
     for (let i = 1; i <= totalSacolas; i++) {
-      const html = renderEtiquetaSacolaToHTML(pedido, i, totalSacolas, restaurantConfig)
+      const html = renderEtiquetaSacolaToHTML(pedido, i, totalSacolas, restaurantConfig, settingsRef.current.appEntregador)
 
       if (electronAPI?.isElectron?.() && settingsRef.current.impressoraAutomatica) {
         const printed = await printWithFeedback(html)
@@ -1915,16 +1882,6 @@ const handlePrintBagLabels = useCallback(
         return { success: false, deferred: true }
       }
 
-      // ✅ Intercepta ANTES de qualquer chamada — modal gerencia o avanço
-      if (
-        nextStatus === 'Saiu para entrega' &&
-        settingsRef.current.appEntregador &&
-        isDelivery(pedido)
-      ) {
-        setMotoboyModalTarget(pedido)
-        return { success: false, deferred: true }
-      }
-
       setLoadingOrderId(pedido._id)
       setPedidos((prev) =>
         prev.map((p) => p._id === pedido._id ? { ...p, status: nextStatus } : p)
@@ -2284,16 +2241,6 @@ const handlePrintBagLabels = useCallback(
       })
     }
 
-    if (settings.appEntregador && motoboyAvailability.checked && motoboyAvailability.count === 0) {
-      alerts.push({
-        id: 'motoboys-offline',
-        severity: 'warning',
-        icon: 'fa-user-slash',
-        label: 'Motoboys offline',
-        detail: motoboyAvailability.error || 'Nenhum disponível',
-      })
-    }
-
     if (!isOnline || isFromCache) {
       alerts.push({
         id: 'offline-cache',
@@ -2311,8 +2258,6 @@ const handlePrintBagLabels = useCallback(
     pedidosPendentes,
     printFailure,
     nexBotStatus,
-    settings.appEntregador,
-    motoboyAvailability,
     isOnline,
     isFromCache,
   ])
@@ -2699,6 +2644,7 @@ const handlePrintBagLabels = useCallback(
                       onAdvance={() => advanceStatus(p)}
                       onPrint={() => handlePrint(p)}
                       avisos={avisosPorPedido.get(p._id)}
+                      codigoEntregador={settings.appEntregador}
                       printStatus={getVisiblePrintStatus(p._id)}
                       color="purple"
                       isLoading={loadingOrderId === p._id}
@@ -2727,6 +2673,7 @@ const handlePrintBagLabels = useCallback(
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
                     avisos={avisosPorPedido.get(p._id)}
+                    codigoEntregador={settings.appEntregador}
                     printStatus={getVisiblePrintStatus(p._id)}
                     color="orange"
                     isLoading={loadingOrderId === p._id}
@@ -2756,6 +2703,7 @@ const handlePrintBagLabels = useCallback(
                     onAdvance={() => advanceStatus(p)}
                     onPrint={() => handlePrint(p)}
                     avisos={avisosPorPedido.get(p._id)}
+                    codigoEntregador={settings.appEntregador}
                     printStatus={getVisiblePrintStatus(p._id)}
                     color="blue"
                     isLoading={loadingOrderId === p._id}
@@ -3020,7 +2968,7 @@ const handlePrintBagLabels = useCallback(
                     <i className="fas fa-motorcycle text-purple-600 text-sm"></i>
                     <span className="text-sm text-gray-900 font-bold">App do Entregador</span>
                   </div>
-                  <p className="text-xs text-gray-600">Atribui pedidos manualmente aos seus motoboys</p>
+                  <p className="text-xs text-gray-600">Imprime na comanda o código que o motoboy digita no app para sair com o pedido</p>
                 </div>
                 <Switch
                   checked={settings.appEntregador}
@@ -3274,26 +3222,6 @@ const handlePrintBagLabels = useCallback(
           />
         )}
 
-        {/* Modal de seleção de motoboy */}
-        {motoboyModalTarget && (
-        <MotoboySelectorModal
-          pedido={motoboyModalTarget}
-          nexBotStatus={nexBotStatus}
-          onClose={() => setMotoboyModalTarget(null)}
-          onAtribuido={async () => {
-            // Motoboy atribuído com sucesso — avança (o backend avisa o cliente, com rastreio)
-            await apiUpdateStatus(motoboyModalTarget._id, 'Saiu para entrega')
-            setMotoboyModalTarget(null)
-            fetchPedidos()
-          }}
-          onSkip={async () => {
-            // Sem motoboy — avança normalmente
-            await apiUpdateStatus(motoboyModalTarget._id, 'Saiu para entrega')
-            setMotoboyModalTarget(null)
-            fetchPedidos()
-          }}
-        />
-      )}
 
         {showSlugModal && (
           <SlugInputModal
@@ -3699,6 +3627,7 @@ function OrderCard({
   visibleClusters,
   toggleClusterPin,
   avisos,
+  codigoEntregador = false,
 }) {
   const colorThemes = {
     purple: 'border-l-4 border-l-[#7f22fe]',
@@ -3946,12 +3875,23 @@ function OrderCard({
         </div>
       )}
 
+      {/* Código que o motoboy digita no app (também sai na comanda) */}
+      {codigoEntregador && isDelivery(pedido) && pedido.status === 'Em preparação' && !pedido.entregadorNome && (
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-gray-50 border border-gray-200" title="O motoboy digita este código no app do entregador">
+          <i className="fas fa-motorcycle text-gray-500 text-[9px]" aria-hidden="true"></i>
+          <span className="text-[10px] font-bold text-gray-600">Código do entregador</span>
+          <span className="ml-auto text-[12px] font-black tracking-widest text-gray-900">{codigoEntrega(pedido._id)}</span>
+        </div>
+      )}
+
       {/* Badge motoboy atribuído */}
       {pedido.motoboyAtribuido && (
         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-purple-50 border border-purple-200">
           <i className="fas fa-user-check text-purple-600 text-[9px]"></i>
-          <span className="text-[10px] font-bold text-purple-700">
-            Motoboy Atribuído
+          <span className="text-[10px] font-bold text-purple-700 truncate">
+            {pedido.entregadorNome
+              ? `Com ${pedido.entregadorNome.split(' ')[0]}${pedido.status === 'Saiu para entrega' ? ' · ele confirma a entrega' : ''}`
+              : 'Motoboy atribuído'}
           </span>
           <a
             href={`https://nexfood.app/tracking/${pedido._id}`}
@@ -3961,7 +3901,7 @@ function OrderCard({
             className="text-[9px] text-purple-500 ml-auto underline"
             title="Ver rastreamento"
           >
-            Tracking
+            Rastrear
           </a>
         </div>
       )}
@@ -5250,185 +5190,6 @@ function BagCountModal({ pedido, onConfirm, onClose }) {
           >
             <i className="fas fa-print" aria-hidden="true"></i>
             Imprimir {count} {count === 1 ? 'Etiqueta' : 'Etiquetas'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function MotoboySelectorModal({ pedido, onClose, onAtribuido, onSkip }) {
-  const [motoboys, setMotoboys]   = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [atribuindo, setAtribuindo] = useState(null)
-  const [erro, setErro]           = useState(null)
-  const trapRef = useFocusTrap(true, onClose)
-
-  const slug = localStorage.getItem('restauranteSlug') || ''
-
-  useEffect(() => {
-    apiFetch(`https://api.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
-      .then(r => r.json())
-      .then(data => {
-        setMotoboys(data.ativos?.filter(m => m.status === 'disponivel') || [])
-        setLoading(false)
-      })
-      .catch(() => { setErro('Erro ao buscar motoboys.'); setLoading(false) })
-  }, [slug])
-
-  const handleAtribuir = async (presenca) => {
-  setAtribuindo(presenca.presencaId)
-  try {
-    const res = await apiFetch('https://api.nexfood.app/api/motoboy/atribuir-entrega', {
-      method: 'POST',
-      body: JSON.stringify({
-        motoboyId:       presenca.motoboy._id,
-        pedidoId:        pedido._id,
-        restauranteSlug: slug,
-      }),
-    })
-    if (!res.ok) throw new Error()
-    onAtribuido() // ✅ pai avança o status e notifica
-  } catch {
-    setErro('Falha ao atribuir. Tente novamente.')
-    setAtribuindo(null)
-  }
-}
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
-
-      <div
-        ref={trapRef}
-        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh]"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="motoboy-modal-title"
-      >
-        {/* Header */}
-        <div className="bg-[#7f22fe] px-5 py-4 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3 text-white">
-            <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center">
-              <i className="fas fa-motorcycle text-white"></i>
-            </div>
-            <div>
-              <h3 id="motoboy-modal-title" className="font-bold text-base leading-tight">
-                Atribuir Entregador
-              </h3>
-              <p className="text-purple-200 text-xs">Pedido #{getOrderNumber(pedido)}</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="text-white/70 hover:text-white" type="button" aria-label="Fechar">
-            <i className="fas fa-times"></i>
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
-
-          {/* Endereço do pedido */}
-          {pedido.enderecoEntrega && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm">
-              <i className="fas fa-map-marker-alt text-blue-500 mt-0.5 shrink-0"></i>
-              <span className="text-blue-900 font-medium">
-                {pedido.enderecoEntrega.rua}, {pedido.enderecoEntrega.numero} · {pedido.enderecoEntrega.bairro}
-              </span>
-            </div>
-          )}
-
-          {loading && (
-            <div className="flex flex-col items-center py-10 text-gray-400 gap-3">
-              <i className="fas fa-spinner fa-spin text-2xl"></i>
-              <span className="text-sm">Buscando motoboys disponíveis...</span>
-            </div>
-          )}
-
-          {!loading && erro && (
-            <div className="text-center py-8 text-red-500 text-sm">
-              <i className="fas fa-exclamation-circle text-2xl mb-2 block"></i>
-              {erro}
-            </div>
-          )}
-
-          {!loading && !erro && motoboys.length === 0 && (
-            <div className="text-center py-10 space-y-2">
-              <i className="fas fa-user-slash text-3xl text-gray-300"></i>
-              <p className="text-sm font-bold text-gray-500">Nenhum motoboy disponível</p>
-              <p className="text-xs text-gray-400">Aguarde um entregador fazer check-in no app.</p>
-              <button
-                onClick={() => {
-                  setLoading(true)
-                  apiFetch(`https://api.nexfood.app/api/motoboy/fila?restauranteSlug=${slug}`)
-                    .then(r => r.json())
-                    .then(d => { setMotoboys(d.ativos?.filter(m => m.status === 'disponivel') || []); setLoading(false) })
-                    .catch(() => setLoading(false))
-                }}
-                className="mt-2 text-xs text-[#7f22fe] underline"
-                type="button"
-              >
-                Atualizar lista
-              </button>
-            </div>
-          )}
-
-          {!loading && motoboys.map((presenca) => (
-            <button
-              key={presenca.presencaId}
-              onClick={() => handleAtribuir(presenca)}
-              disabled={!!atribuindo}
-              className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
-                atribuindo === presenca.presencaId
-                  ? 'bg-purple-50 border-[#7f22fe]'
-                  : 'bg-white border-gray-200 hover:border-[#7f22fe]/60 hover:bg-purple-50/30'
-              }`}
-              type="button"
-            >
-              {/* Avatar */}
-              <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#7f22fe] to-indigo-500 flex items-center justify-center text-white font-black text-lg shrink-0">
-                {presenca.motoboy.nome?.[0]?.toUpperCase() || '?'}
-              </div>
-
-              {/* Info */}
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-gray-900 text-sm truncate">{presenca.motoboy.nome}</p>
-                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                  <span className="text-xs text-gray-500">
-                    <i className="fas fa-motorcycle text-gray-400 mr-1"></i>
-                    {presenca.motoboy.veiculo || 'moto'}
-                    {presenca.motoboy.placa ? ` · ${presenca.motoboy.placa}` : ''}
-                  </span>
-                  {presenca.motoboy.totalEntregas > 0 && (
-                    <span className="text-xs text-emerald-600 font-bold">
-                      ★ {presenca.motoboy.totalEntregas} entregas
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Ação */}
-              <div className="shrink-0">
-                {atribuindo === presenca.presencaId ? (
-                  <i className="fas fa-spinner fa-spin text-[#7f22fe]"></i>
-                ) : (
-                  <span className="text-xs font-black text-[#7f22fe] bg-purple-100 px-3 py-1.5 rounded-full border border-purple-200">
-                    Atribuir
-                  </span>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Footer */}
-        <div className="px-5 py-4 border-t bg-gray-50 shrink-0">
-          <button
-            onClick={onSkip}
-            className="w-full py-3 rounded-xl border-2 border-gray-200 text-gray-500 font-bold hover:bg-gray-100 transition-colors text-sm"
-            type="button"
-          >
-            <i className="fas fa-arrow-right mr-2"></i>
-            Enviar sem atribuir motoboy
           </button>
         </div>
       </div>
