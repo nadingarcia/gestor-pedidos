@@ -3802,16 +3802,6 @@ function OrderCard({
               ? `Com ${pedido.entregadorNome.split(' ')[0]}${pedido.status === 'Saiu para entrega' ? ' · ele confirma a entrega' : ''}`
               : 'Motoboy atribuído'}
           </span>
-          <a
-            href={`https://nexfood.app/tracking/${pedido._id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="text-[9px] text-purple-500 ml-auto underline"
-            title="Ver rastreamento"
-          >
-            Rastrear
-          </a>
         </div>
       )}
 
@@ -3962,7 +3952,11 @@ function OrderModal({
     if (!currentPedido.cliente?.telefone) return
     const phone = currentPedido.cliente.telefone.replace(/\D/g, '')
     const fullPhone = phone.length <= 11 ? `55${phone}` : phone
-    const msg = `Olá ${currentPedido.cliente.nome}, tudo bem? Aqui é do NexFood. Estamos entrando em contato sobre seu pedido #${getOrderNumber(currentPedido)}.`
+    // O cliente conhece a loja, não a NexFood: o recado leva o nome da loja (o mesmo da comanda impressa)
+    let loja = ''
+    try { loja = (localStorage.getItem('nomeRestaurante') || '').trim() } catch { /* sem armazenamento */ }
+    const primeiroNome = String(currentPedido.cliente.nome || '').trim().split(/\s+/)[0]
+    const msg = `Olá${primeiroNome ? ` ${primeiroNome}` : ''}, tudo bem? ${loja ? `Aqui é do ${loja}. ` : ''}Estamos entrando em contato sobre seu pedido #${getOrderNumber(currentPedido)}.`
     window.open(
       `https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`,
       '_blank'
