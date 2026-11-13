@@ -578,8 +578,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
   const cnpjHtml = escapeHtml(cnpjFormatado)
   const numeroPedidoHtml = escapeHtml(getOrderNumber(pedido))
   const clienteNomeHtml = escapeHtml(pedido.cliente?.nome || 'Consumidor')
-  // Sem telefone do cliente na comanda (2026-11-12): a comanda vai na sacola e o motoboy
-  // confirma a entrega com os 4 últimos números do telefone, que o cliente informa na porta.
+  const clienteTelefoneHtml = escapeHtml(pedido.cliente?.telefone || '')
   const totalPedidosClienteHtml = escapeHtml(pedido.cliente?.totalPedidos || 0)
   const formaPagamento =
     {
@@ -718,6 +717,7 @@ const renderPedidoToHTML = (pedido, restaurantConfig = {}, printConfig = {}) => 
         <div class="info-group">
           <div class="info-label">Cliente</div>
           <div class="info-value">${clienteNomeHtml}</div>
+          ${pedido.cliente?.telefone ? `<div class="info-sub">Tel: ${clienteTelefoneHtml}</div>` : ''}
           ${pedido.cliente?.totalPedidos > 0 ? `<div class="fiel">★ Cliente Fiel (${totalPedidosClienteHtml}º pedido)</div>` : ''}
         </div>
 
