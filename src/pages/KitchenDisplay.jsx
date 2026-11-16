@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import electronAPI from '@utils/electronBridge'
 import { getTipoPedidoLabel, isDelivery } from '@utils/orderType'
 import { linhaComplemento } from '../utils/complementos'
+import { NomeNexfood, SimboloNexfood } from '../components/LogoNexfood'
 
 const KITCHEN_PREFS_KEY = 'nexfood_kitchen_display_prefs'
 const KITCHEN_READY_KEY = 'nexfood_kitchen_ready_items'
@@ -185,8 +186,8 @@ export default function KitchenDisplay() {
       <header className="sticky top-0 z-20 border-b border-gray-800 bg-gray-950/95 backdrop-blur shrink-0">
         <div className="flex items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg shadow-[#7f22fe]/30 shrink-0">
-              <i className="fas fa-bolt text-white text-xl" aria-hidden="true"></i>
+            <div className="w-10 h-10 rounded-xl bg-[#7c3aed] flex items-center justify-center shadow-lg shadow-[#7c3aed]/30 shrink-0">
+              <SimboloNexfood className="h-5 w-6 text-white" />
             </div>
             <div className="min-w-0">
               <p className="text-lg font-black tracking-tight leading-tight">Cozinha</p>

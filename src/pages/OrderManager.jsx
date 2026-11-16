@@ -23,6 +23,7 @@ import { PEDIDO_TESTE_IMPRESSAO } from '../components/PedidoTeste'
 import packageInfo from '../../package.json'
 import notificationSoundUrl from '../assets/notification.mp3'
 import { linhaComplemento } from '../utils/complementos'
+import { NomeNexfood, SimboloNexfood } from '../components/LogoNexfood'
 import { getTipoPedidoLabel, isDelivery } from '@utils/orderType'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2256,10 +2257,10 @@ const handlePrintBagLabels = useCallback(
             {/* Logo + título */}
             <div className="flex items-center gap-4">
               <div
-                className="w-10 h-10 rounded-lg bg-[#7f22fe] flex items-center justify-center shadow-sm"
+                className="w-10 h-10 rounded-lg bg-[#7c3aed] flex items-center justify-center shadow-sm"
                 aria-hidden="true"
               >
-                <i className="fas fa-bolt text-white text-lg"></i>
+                <SimboloNexfood className="h-5 w-6 text-white" />
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900 leading-tight">
@@ -2377,7 +2378,7 @@ const handlePrintBagLabels = useCallback(
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Buscar nº do pedido, cliente ou telefone"
                   title="Atalho: tecla /"
-                  className="peer w-full pl-10 pr-10 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 transition-all"
+                  className="peer w-full pl-10 pr-10 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7c3aed] focus:ring-2 focus:ring-[#7c3aed]/20 transition-all"
                   aria-label="Buscar pedidos (atalho: tecla /)"
                 />
                 <i
@@ -2411,18 +2412,18 @@ const handlePrintBagLabels = useCallback(
               {/* Busca ativa: os pedidos que não batem ficam escondidos, inclusive um novo que chegue */}
               {searchQuery.trim() && (
                 <div
-                  className="hidden md:flex items-center gap-2 px-3 py-2 bg-[#7f22fe]/10 border border-[#7f22fe]/30 rounded-lg"
+                  className="hidden md:flex items-center gap-2 px-3 py-2 bg-[#7c3aed]/10 border border-[#7c3aed]/30 rounded-lg"
                   role="status"
                 >
-                  <i className="fas fa-search text-[#7f22fe] text-sm" aria-hidden="true"></i>
-                  <span className="text-sm font-bold text-[#7f22fe] whitespace-nowrap">
+                  <i className="fas fa-search text-[#7c3aed] text-sm" aria-hidden="true"></i>
+                  <span className="text-sm font-bold text-[#7c3aed] whitespace-nowrap">
                     Busca ativa · {pedidosFiltrados.length} de {pedidosComClusters.length}{' '}
                     {pedidosComClusters.length === 1 ? 'pedido' : 'pedidos'}
                   </span>
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="ml-1 text-[#7f22fe] hover:text-[#6b1de0]"
+                    className="ml-1 text-[#7c3aed] hover:text-[#6d28d9]"
                     aria-label="Limpar busca e mostrar todos os pedidos"
                     title="Limpar busca"
                   >
@@ -2531,7 +2532,7 @@ const handlePrintBagLabels = useCallback(
                 }}
                 className={`w-10 h-10 rounded-lg transition-all active:scale-95 border ${
                   showSettings
-                    ? 'bg-[#7f22fe] text-white border-[#7f22fe] shadow-md'
+                    ? 'bg-[#7c3aed] text-white border-[#7c3aed] shadow-md'
                     : 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600'
                 }`}
                 aria-label="Abrir configurações"
@@ -2552,7 +2553,7 @@ const handlePrintBagLabels = useCallback(
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Pedido, cliente ou últimos dígitos do telefone..."
-                className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20"
+                className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:outline-none focus:border-[#7c3aed] focus:ring-2 focus:ring-[#7c3aed]/20"
                 aria-label="Buscar pedidos"
               />
               <i
@@ -2784,7 +2785,7 @@ const handlePrintBagLabels = useCallback(
                 id="select-impressora"
                 value={settings.impressoraAutomatica}
                 onChange={(e) => saveSettings({ ...settings, impressoraAutomatica: e.target.value })}
-                className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-300 text-gray-900 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none transition-all"
+                className="w-full px-4 py-3 rounded-lg bg-gray-50 border border-gray-300 text-gray-900 text-sm focus:border-[#7c3aed] focus:ring-2 focus:ring-[#7c3aed]/20 focus:outline-none transition-all"
               >
                 <option value="">Manual (sem impressão automática)</option>
                 {printers.map((p) => (
@@ -2813,10 +2814,10 @@ const handlePrintBagLabels = useCallback(
                           key={size}
                           onClick={() => saveSettings({ ...settings, fonteTamanho: size })}
                           type="button"
-                          className={`py-3 rounded-lg border-2 transition-all text-center focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
+                          className={`py-3 rounded-lg border-2 transition-all text-center focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40 ${
                             settings.fonteTamanho === size
-                              ? 'bg-[#7f22fe] border-[#7f22fe] text-white shadow-md'
-                              : 'bg-white border-gray-200 text-gray-700 hover:border-[#7f22fe]/40'
+                              ? 'bg-[#7c3aed] border-[#7c3aed] text-white shadow-md'
+                              : 'bg-white border-gray-200 text-gray-700 hover:border-[#7c3aed]/40'
                           }`}
                           aria-pressed={settings.fonteTamanho === size}
                         >
@@ -3007,7 +3008,7 @@ const handlePrintBagLabels = useCallback(
                       value={settings.enderecoRestaurante}
                       onChange={(e) => saveSettings({ ...settings, enderecoRestaurante: e.target.value })}
                       placeholder="Ex: Av. Paulista, 1578, São Paulo, SP"
-                      className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/20 focus:outline-none"
+                      className="w-full px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-300 text-sm focus:border-[#7c3aed] focus:ring-2 focus:ring-[#7c3aed]/20 focus:outline-none"
                     />
                     <p className="text-xs text-gray-500">Usado como ponto de partida nas rotas</p>
                   </div>
@@ -3019,11 +3020,11 @@ const handlePrintBagLabels = useCallback(
             <AccordionSection id="acc-sobre" icon="info-circle" title="Sobre">
               <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
                 <div className="text-center mb-4">
-                  <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-md">
-                    <i className="fas fa-bolt text-2xl text-white" aria-hidden="true"></i>
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-[#7c3aed] flex items-center justify-center shadow-md">
+                    <SimboloNexfood className="h-6 w-7 text-white" />
                   </div>
-                  <h4 className="font-bold text-gray-900 text-lg mb-1">
-                    NEXFOOD
+                  <h4 className="mb-1.5">
+                    <NomeNexfood className="mx-auto block h-[14px] w-[105px] text-gray-900" />
                   </h4>
                   <p className="text-sm text-gray-500">by Nadin Garcia</p>
                 </div>
@@ -3052,7 +3053,7 @@ const handlePrintBagLabels = useCallback(
             <AccordionSection id="acc-conta" icon="user-circle" title="Conta">
               <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
                 <div className="flex items-start gap-3 mb-4">
-                  <div className="w-11 h-11 rounded-lg bg-[#7f22fe]/10 text-[#7f22fe] flex items-center justify-center shrink-0">
+                  <div className="w-11 h-11 rounded-lg bg-[#7c3aed]/10 text-[#7c3aed] flex items-center justify-center shrink-0">
                     <i className="fas fa-store" aria-hidden="true"></i>
                   </div>
                   <div className="min-w-0">
@@ -3393,8 +3394,8 @@ function Switch({ checked, onChange, ariaLabel }) {
   return (
     <button
       onClick={onChange}
-      className={`relative w-12 h-6 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 focus:ring-offset-1 ${
-        checked ? 'bg-[#7f22fe]' : 'bg-gray-300'
+      className={`relative w-12 h-6 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40 focus:ring-offset-1 ${
+        checked ? 'bg-[#7c3aed]' : 'bg-gray-300'
       }`}
       role="switch"
       aria-checked={checked}
@@ -3428,14 +3429,14 @@ function KanbanColumn({
   isAlerting = false,
 }) {
   const colorThemes = {
-    purple: 'border-[#7f22fe] bg-purple-50',
+    purple: 'border-[#7c3aed] bg-purple-50',
     orange: 'border-orange-500 bg-orange-50',
     blue: 'border-blue-500 bg-blue-50',
     emerald: 'border-emerald-500 bg-emerald-50',
   }
 
   const textColors = {
-    purple: 'text-[#7f22fe]',
+    purple: 'text-[#7c3aed]',
     orange: 'text-orange-600',
     blue: 'text-blue-600',
     emerald: 'text-emerald-600',
@@ -3548,7 +3549,7 @@ function OrderCard({
   avisos,
 }) {
   const colorThemes = {
-    purple: 'border-l-4 border-l-[#7f22fe]',
+    purple: 'border-l-4 border-l-[#7c3aed]',
     orange: 'border-l-4 border-l-orange-500',
     blue: 'border-l-4 border-l-blue-500',
     emerald: 'border-l-4 border-l-emerald-500 opacity-60 grayscale-[0.5]',
@@ -3592,7 +3593,7 @@ function OrderCard({
           onClick()
         }
       }}
-      className={`relative bg-white p-3 rounded-lg shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all cursor-pointer border group flex flex-col gap-2 focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
+      className={`relative bg-white p-3 rounded-lg shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all cursor-pointer border group flex flex-col gap-2 focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40 ${
         colorThemes[color]
       } ${prazo.atrasado && !isDone ? 'ring-1 ring-red-400/60' : ''}`}
       role="button"
@@ -4069,7 +4070,7 @@ function OrderModal({
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-4">
               <div
-                className="w-12 h-12 rounded-lg bg-[#7f22fe] flex items-center justify-center"
+                className="w-12 h-12 rounded-lg bg-[#7c3aed] flex items-center justify-center"
                 aria-hidden="true"
               >
                 <i className="fas fa-receipt text-white"></i>
@@ -4086,7 +4087,7 @@ function OrderModal({
                     </span>
                   )}
                 </h2>
-                <span className="text-sm px-3 py-1 rounded-full bg-purple-100 text-[#7f22fe] font-medium">
+                <span className="text-sm px-3 py-1 rounded-full bg-purple-100 text-[#7c3aed] font-medium">
                   {currentPedido.status}
                 </span>
               </div>
@@ -4187,7 +4188,7 @@ function OrderModal({
             <div className="flex-1 space-y-3 p-4 custom-scrollbar lg:overflow-y-auto">
               <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-[#7f22fe]">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-[#7c3aed]">
                     <i className="fas fa-user" aria-hidden="true"></i>
                   </div>
                   <div className="min-w-0 flex-1">
@@ -4322,7 +4323,7 @@ function OrderModal({
                   )}
                   <div className="flex items-end justify-between border-t border-gray-200 pt-3">
                     <span className="font-bold text-gray-900">Total</span>
-                    <strong className="text-2xl leading-none text-[#7f22fe]">
+                    <strong className="text-2xl leading-none text-[#7c3aed]">
                       {formatCurrency(currentPedido.total)}
                     </strong>
                   </div>
@@ -4377,7 +4378,7 @@ function OrderModal({
                   <button
                     onClick={() => onPrintBagLabels(currentPedido)}
                     disabled={isLoading}
-                    className="flex-1 rounded-xl border border-violet-200 bg-violet-50 py-3 text-xs font-bold text-[#7f22fe] hover:bg-violet-100 disabled:opacity-50"
+                    className="flex-1 rounded-xl border border-violet-200 bg-violet-50 py-3 text-xs font-bold text-[#7c3aed] hover:bg-violet-100 disabled:opacity-50"
                     type="button"
                   >
                     <i className="fas fa-shopping-bag mr-1.5" aria-hidden="true"></i>
@@ -4390,7 +4391,7 @@ function OrderModal({
                   onClick={handleAdvance}
                   disabled={isLoading}
                   className={`mt-2 w-full rounded-xl py-3.5 text-sm font-black text-white transition-colors ${
-                    isLoading ? 'cursor-not-allowed bg-gray-400' : 'bg-[#7f22fe] hover:bg-[#6b1de0]'
+                    isLoading ? 'cursor-not-allowed bg-gray-400' : 'bg-[#7c3aed] hover:bg-[#6d28d9]'
                   }`}
                   type="button"
                   aria-label={isLoading ? orderAction?.loadingLabel : orderAction?.label}
@@ -4433,7 +4434,7 @@ function OrderModal({
                   role="listitem"
                 >
                   <div className="flex items-start gap-4">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#7f22fe] text-sm font-black text-white shadow-sm">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#7c3aed] text-sm font-black text-white shadow-sm">
                       {item.quantidade}x
                     </div>
                     <div className="min-w-0 flex-1">
@@ -4687,7 +4688,7 @@ function ElectronBanner() {
       aria-labelledby="banner-desktop-titulo"
     >
       <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#7f22fe]/10 text-[#7f22fe]" aria-hidden="true">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#7c3aed]/10 text-[#7c3aed]" aria-hidden="true">
           <i className="fas fa-desktop"></i>
         </span>
         <div className="min-w-0 flex-1">
@@ -4716,7 +4717,7 @@ function ElectronBanner() {
           'O PC não entra em descanso no expediente',
         ].map((label) => (
           <li key={label} className="flex items-center gap-2">
-            <i className="fas fa-check w-4 text-center text-xs text-[#7f22fe]" aria-hidden="true"></i>
+            <i className="fas fa-check w-4 text-center text-xs text-[#7c3aed]" aria-hidden="true"></i>
             <span>{label}</span>
           </li>
         ))}
@@ -4727,7 +4728,7 @@ function ElectronBanner() {
           href={downloadUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#7f22fe] py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#6b1de0] focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
+          className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#7c3aed] py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#6d28d9] focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40"
         >
           <i className="fas fa-download" aria-hidden="true"></i>
           Baixar para Windows
@@ -4770,7 +4771,7 @@ function AccordionSection({ id, icon, title, defaultOpen = false, children }) {
       <button
         type="button"
         onClick={() => { abriuPeloUsuario.current = true; setOpen(!open) }}
-        className="w-full flex items-center justify-between px-4 py-3.5 bg-gray-50 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#7f22fe]/30"
+        className="w-full flex items-center justify-between px-4 py-3.5 bg-gray-50 hover:bg-gray-100 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#7c3aed]/30"
         aria-expanded={open}
         aria-controls={id}
       >
@@ -5000,7 +5001,7 @@ function BagCountModal({ pedido, onConfirm, onClose }) {
         aria-labelledby="bag-modal-title"
       >
         {/* Header */}
-        <div className="bg-[#7f22fe] px-5 py-4 flex items-center justify-between">
+        <div className="bg-[#7c3aed] px-5 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3 text-white">
             <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center">
               <i className="fas fa-shopping-bag text-white" aria-hidden="true"></i>
@@ -5062,9 +5063,9 @@ function BagCountModal({ pedido, onConfirm, onClose }) {
                 key={n}
                 onClick={() => setCount(n)}
                 type="button"
-                className={`py-2.5 rounded-xl text-sm font-bold transition-all focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 ${
+                className={`py-2.5 rounded-xl text-sm font-bold transition-all focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40 ${
                   count === n
-                    ? 'bg-[#7f22fe] text-white shadow-md scale-105'
+                    ? 'bg-[#7c3aed] text-white shadow-md scale-105'
                     : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
                 }`}
                 aria-pressed={count === n}
@@ -5100,7 +5101,7 @@ function BagCountModal({ pedido, onConfirm, onClose }) {
           </button>
           <button
             onClick={() => onConfirm(count)}
-            className="flex-[2] py-3 rounded-xl bg-[#7f22fe] hover:bg-[#6b1de0] text-white font-bold transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40 flex items-center justify-center gap-2"
+            className="flex-[2] py-3 rounded-xl bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40 flex items-center justify-center gap-2"
             type="button"
           >
             <i className="fas fa-print" aria-hidden="true"></i>
@@ -5148,7 +5149,7 @@ function SlugInputModal({ onConfirm, onClose }) {
         aria-labelledby="slug-modal-title"
       >
         {/* Header */}
-        <div className="bg-[#7f22fe] px-5 py-4 flex items-center justify-between">
+        <div className="bg-[#7c3aed] px-5 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3 text-white">
             <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center">
               <i className="fas fa-motorcycle"></i>
@@ -5187,8 +5188,8 @@ function SlugInputModal({ onConfirm, onClose }) {
               onChange={(e) => { setSlug(e.target.value.toLowerCase()); setErro('') }}
               onKeyDown={(e) => e.key === 'Enter' && handleConfirm()}
               placeholder="ex: pizzaria-marcos"
-              className={`w-full px-4 py-3 rounded-xl border-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/30 transition-all ${
-                erro ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-[#7f22fe]'
+              className={`w-full px-4 py-3 rounded-xl border-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/30 transition-all ${
+                erro ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-[#7c3aed]'
               }`}
               spellCheck={false}
               autoComplete="off"
@@ -5213,7 +5214,7 @@ function SlugInputModal({ onConfirm, onClose }) {
           <button
             onClick={handleConfirm}
             disabled={!slug.trim()}
-            className="flex-[2] py-3 rounded-xl bg-[#7f22fe] hover:bg-[#6b1de0] disabled:bg-gray-300 text-white font-bold transition-all text-sm focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/40"
+            className="flex-[2] py-3 rounded-xl bg-[#7c3aed] hover:bg-[#6d28d9] disabled:bg-gray-300 text-white font-bold transition-all text-sm focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40"
             type="button"
           >
             <i className="fas fa-check mr-2"></i>Salvar e Ativar

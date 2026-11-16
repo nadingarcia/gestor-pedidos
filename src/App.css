@@ -61,7 +61,7 @@
           width: 18px;
           height: 18px;
           border-radius: 50%;
-          background: #7f22fe;
+          background: #7c3aed;
           cursor: pointer;
           box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
@@ -69,7 +69,7 @@
           width: 18px;
           height: 18px;
           border-radius: 50%;
-          background: #7f22fe;
+          background: #7c3aed;
           cursor: pointer;
           border: none;
           box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
@@ -194,7 +194,7 @@ mark {
 
 /* === Focus Styles === */
 *:focus-visible {
-  outline: 2px solid #7f22fe;
+  outline: 2px solid #7c3aed;
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -202,7 +202,7 @@ mark {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid #7f22fe;
+  outline: 2px solid #7c3aed;
   outline-offset: 2px;
 }
 
@@ -404,8 +404,8 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 
 .checkbox-custom.checked {
-  background: #7f22fe;
-  border-color: #7f22fe;
+  background: #7c3aed;
+  border-color: #7c3aed;
   transform: scale(1.05);
 }
 
@@ -415,7 +415,7 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 
 .search-input:focus {
-  box-shadow: 0 0 0 3px rgba(127, 34, 254, 0.1);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
 }
 
 .search-input::placeholder {
@@ -576,20 +576,20 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 
 .text-gradient {
-  background: linear-gradient(135deg, #7f22fe 0%, #a855f7 100%);
+  background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .shadow-glow {
-  box-shadow: 0 0 20px rgba(127, 34, 254, 0.3);
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.3);
 }
 
 .border-gradient {
   border: 2px solid transparent;
   background: linear-gradient(white, white) padding-box,
-              linear-gradient(135deg, #7f22fe, #a855f7) border-box;
+              linear-gradient(135deg, #7c3aed, #a855f7) border-box;
 }
 
 /* === Loading Spinner === */

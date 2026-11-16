@@ -267,7 +267,7 @@ a:focus-visible {
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #7f22fe;
+    background: #7c3aed;
     cursor: pointer;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
@@ -275,7 +275,7 @@ a:focus-visible {
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #7f22fe;
+    background: #7c3aed;
     cursor: pointer;
     border: none;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);

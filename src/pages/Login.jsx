@@ -1,6 +1,7 @@
 import { useState, useCallback, useId, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { API_PRINCIPAL, fetchComReserva } from '../utils/apiFetch'
+import { NomeNexfood, SimboloNexfood } from '../components/LogoNexfood'
 
 const API_URL = `${API_PRINCIPAL}/api/login`
 
@@ -199,11 +200,11 @@ export default function Login() {
 
   {/* Logo */}
   <div className="flex items-center gap-4 mb-12">
-    <div className="w-16 h-16 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg">
-      <i className="fas fa-bolt text-white text-2xl"></i>
+    <div className="w-16 h-16 rounded-xl bg-[#7c3aed] flex items-center justify-center shadow-lg">
+      <SimboloNexfood className="h-7 w-[33px] text-white" />
     </div>
     <div>
-      <h2 className="text-gray-900 text-3xl font-bold tracking-tight">NEXFOOD</h2>
+      <h2 className="m-0 mb-1.5"><NomeNexfood className="block h-[22px] w-[164px] text-gray-900" /></h2>
       <p className="text-gray-500 text-sm font-medium">Tecnologia para Delivery</p>
     </div>
   </div>
@@ -275,7 +276,7 @@ export default function Login() {
             
             {/* Logo Mobile */}
             <div className="lg:hidden flex items-center justify-center gap-3 mb-8">
-              <div className="w-14 h-14 rounded-xl bg-[#7f22fe] flex items-center justify-center shadow-lg">
+              <div className="w-14 h-14 rounded-xl bg-[#7c3aed] flex items-center justify-center shadow-lg">
                 <i className="fas fa-utensils text-white text-xl"></i>
               </div>
               <div>
@@ -310,7 +311,7 @@ export default function Login() {
                         href="https://painel.nexfood.app"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="w-full py-3 bg-[#7f22fe] hover:bg-[#6b1de0] text-white font-bold rounded-lg flex items-center justify-center gap-2 transition-colors"
+                        className="w-full py-3 bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-bold rounded-lg flex items-center justify-center gap-2 transition-colors"
                       >
                         <i className="fas fa-globe"></i>
                         Acessar Sistema NexFood
@@ -384,7 +385,7 @@ export default function Login() {
                       autoComplete="tel"
                       required
                       className="w-full h-14 pl-12 pr-4 rounded-lg bg-gray-50 border-2 border-gray-200 text-gray-900 placeholder:text-gray-400 
-                        focus:bg-white focus:border-[#7f22fe] focus:ring-4 focus:ring-purple-100 
+                        focus:bg-white focus:border-[#7c3aed] focus:ring-4 focus:ring-purple-100 
                         outline-none transition-all text-base
                         hover:border-gray-300"
                     />
@@ -403,7 +404,7 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={handleForgotPassword}
-                      className="text-[#7f22fe] hover:text-[#6b1de0] text-xs font-medium hover:underline transition"
+                      className="text-[#7c3aed] hover:text-[#6d28d9] text-xs font-medium hover:underline transition"
                     >
                       Esqueceu?
                     </button>
@@ -424,7 +425,7 @@ export default function Login() {
                       autoComplete="current-password"
                       required
                       className="w-full h-14 pl-12 pr-14 rounded-lg bg-gray-50 border-2 border-gray-200 text-gray-900 placeholder:text-gray-400 
-                        focus:bg-white focus:border-[#7f22fe] focus:ring-4 focus:ring-purple-100 
+                        focus:bg-white focus:border-[#7c3aed] focus:ring-4 focus:ring-purple-100 
                         outline-none transition-all text-base
                         hover:border-gray-300"
                     />
@@ -432,7 +433,7 @@ export default function Login() {
                       type="button"
                       onClick={togglePasswordVisibility}
                       aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-[#7f22fe]/50"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/50"
                     >
                       <i className={`fas ${showPassword ? 'fa-eye-slash' : 'fa-eye'} text-base`}></i>
                     </button>
@@ -446,7 +447,7 @@ export default function Login() {
                       type="checkbox"
                       checked={remember}
                       onChange={toggleRemember}
-                      className="w-5 h-5 rounded border-2 border-gray-300 text-[#7f22fe] focus:ring-2 focus:ring-[#7f22fe]/50 focus:ring-offset-2 cursor-pointer transition-all"
+                      className="w-5 h-5 rounded border-2 border-gray-300 text-[#7c3aed] focus:ring-2 focus:ring-[#7c3aed]/50 focus:ring-offset-2 cursor-pointer transition-all"
                     />
                     <span className="text-gray-700 group-hover:text-gray-900 transition text-sm font-medium">
                       Manter conectado
@@ -460,9 +461,9 @@ export default function Login() {
                   disabled={state.loading || state.success}
                   className="
                     w-full h-14 rounded-lg font-semibold text-base text-white 
-                    bg-[#7f22fe] hover:bg-[#6b1de0]
+                    bg-[#7c3aed] hover:bg-[#6d28d9]
                     shadow-sm hover:shadow-md
-                    disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:bg-[#7f22fe]
+                    disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:bg-[#7c3aed]
                     transition-all duration-200
                     focus:outline-none focus:ring-4 focus:ring-purple-200
                     flex items-center justify-center gap-2
@@ -497,7 +498,7 @@ export default function Login() {
                   href="https://wa.me/5511968337522?text=Ol%C3%A1%2C%20gostaria%20de%20saber%20mais%20sobre%20o%20sistema%20NexFood%20e%20solicitar%20acesso%21" 
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[#7f22fe] hover:text-[#6b1de0] font-semibold text-sm transition hover:underline"
+                  className="inline-flex items-center gap-1 text-[#7c3aed] hover:text-[#6d28d9] font-semibold text-sm transition hover:underline"
                 >
                   <span>Solicitar acesso via WhatsApp</span>
                   <i className="fab fa-whatsapp text-sm ml-1"></i>
@@ -530,8 +531,8 @@ export default function Login() {
         
         /* Custom checkbox styling */
         input[type="checkbox"]:checked {
-          background-color: #7f22fe;
-          border-color: #7f22fe;
+          background-color: #7c3aed;
+          border-color: #7c3aed;
           background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
         }
       `}</style>
