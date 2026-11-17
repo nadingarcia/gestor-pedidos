@@ -216,6 +216,8 @@ As preferências operacionais são salvas no `localStorage`, incluindo:
 
 O login pode salvar sessão em `localStorage` ou `sessionStorage`, conforme a opção "lembrar".
 
+No aplicativo instalado, Configurações → Operação → **Iniciar com o computador** permite ligar ou desligar a abertura automática do Gestor NexFood ao entrar no Windows (ou no sistema usado). A opção consulta e grava a preferência do próprio sistema, separadamente do `localStorage`, e não aparece na versão do navegador. Para entrar direto na tela de pedidos, mantenha a sessão salva usando "lembrar" no login.
+
 ## Observações
 
 - `VITE_API_URL` não é usado hoje no código; as URLs da API estão fixas em `https://painel.nexfood.app/api`.

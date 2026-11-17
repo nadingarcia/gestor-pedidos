@@ -1,6 +1,6 @@
 {
   "name": "nexfood-gestor-pedidos",
-  "version": "1.0.47",
+  "version": "1.0.48",
   "description": "Sistema de gestão de pedidos para restaurantes",
   "main": "electron/main.js",
   "type": "module",
@@ -100,7 +100,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Gestor de Pedidos"
+      "shortcutName": "Gestor NexFood"
     }
   }
 }

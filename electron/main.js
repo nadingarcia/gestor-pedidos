@@ -222,10 +222,10 @@ ipcMain.handle('set-auto-launch', async (event, enable) => {
 ipcMain.handle('check-auto-launch', async () => {
   try {
     const isEnabled = await autoLauncher.isEnabled()
-    return { enabled: isEnabled }
+    return { success: true, enabled: isEnabled }
   } catch (error) {
     console.error('Erro ao verificar auto-inicialização:', error)
-    return { enabled: false }
+    return { success: false, error: error.message }
   }
 })
 

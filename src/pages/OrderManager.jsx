@@ -2729,6 +2729,8 @@ const handlePrintBagLabels = useCallback(
 
             {/* ── Operação ──────────────────────────────────────────────── */}
             <AccordionSection id="acc-operacao" icon="store" title="Operação" defaultOpen={true}>
+              <InicializacaoAutomatica visivel={showSettings} />
+
               <div className="flex items-center justify-between p-4 rounded-lg bg-gray-50 border border-gray-200">
                 <div>
                   <p className="text-sm text-gray-900 font-medium">Aceitar pedidos automaticamente</p>
@@ -3390,11 +3392,12 @@ function KanbanSkeleton({ hasNewOrdersColumn = false }) {
 // Switch — toggle acessível
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Switch({ checked, onChange, ariaLabel }) {
+function Switch({ checked, onChange, ariaLabel, disabled = false }) {
   return (
     <button
       onClick={onChange}
-      className={`relative w-12 h-6 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40 focus:ring-offset-1 ${
+      disabled={disabled}
+      className={`relative w-12 h-6 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/40 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed ${
         checked ? 'bg-[#7c3aed]' : 'bg-gray-300'
       }`}
       role="switch"
@@ -3409,6 +3412,84 @@ function Switch({ checked, onChange, ariaLabel }) {
         aria-hidden="true"
       />
     </button>
+  )
+}
+
+function InicializacaoAutomatica({ visivel }) {
+  const [ativo, setAtivo] = useState(null)
+  const [consultando, setConsultando] = useState(false)
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState('')
+  const [tentativa, setTentativa] = useState(0)
+  const instalado = electronAPI.isElectron()
+
+  useEffect(() => {
+    if (!visivel || !instalado) return
+    let vigente = true
+    setConsultando(true)
+    setAtivo(null)
+    setErro('')
+    const consultar = async () => {
+      try {
+        const resultado = await electronAPI.checkAutoLaunch()
+        if (resultado?.success === false || typeof resultado?.enabled !== 'boolean') throw new Error()
+        if (vigente) setAtivo(resultado.enabled)
+      } catch {
+        if (vigente) setErro('Não foi possível consultar a inicialização automática.')
+      } finally {
+        if (vigente) setConsultando(false)
+      }
+    }
+    consultar()
+    return () => { vigente = false }
+  }, [visivel, instalado, tentativa])
+
+  const alternar = async () => {
+    if (consultando || salvando || ativo === null) return
+    const novo = !ativo
+    setSalvando(true)
+    setErro('')
+    try {
+      const resultado = await electronAPI.setAutoLaunch(novo)
+      if (!resultado?.success) throw new Error()
+      setAtivo(novo)
+    } catch {
+      setErro('Não foi possível alterar a inicialização automática. Tente novamente.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  if (!instalado) return null
+
+  return (
+    <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm text-gray-900 font-medium">Iniciar com o computador</p>
+          <p className="text-xs text-gray-500">Abre o Gestor NexFood automaticamente ao entrar na sua conta do sistema.</p>
+        </div>
+        <Switch
+          checked={ativo === true}
+          onChange={alternar}
+          disabled={consultando || salvando || ativo === null}
+          ariaLabel="Iniciar o Gestor NexFood com o computador"
+        />
+      </div>
+      <p className="text-xs text-gray-500 mt-1" role="status">
+        {consultando ? 'Consultando...' : salvando ? 'Salvando...' : ativo === true ? 'Ativado neste computador.' : ativo === false ? 'Desativado neste computador.' : ''}
+      </p>
+      {erro && (
+        <div className="mt-2">
+          <p className="text-xs text-red-700" role="alert">{erro}</p>
+          {ativo === null && !consultando && (
+            <button type="button" onClick={() => setTentativa(valor => valor + 1)} className="mt-1 text-xs text-violet-700 underline">
+              Tentar novamente
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
